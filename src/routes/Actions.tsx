@@ -5,23 +5,30 @@ import { PEOPLE, person } from '../data/people'
 import { Avatar, Icon, ICONS, Pill } from '../components/primitives'
 import { dueLabel, isOverdue, relativeDay, timecode } from '../lib/format'
 import type { ActionItem, Meeting } from '../data/types'
+import { useWorkspace } from '../state/workspace'
+import { useSession } from '../state/session'
 
 interface Row {
   item: ActionItem
   meeting: Meeting
 }
 
+const UNDATED = '9999-99-99'
+
 export function Actions() {
   const [owner, setOwner] = useState('all')
   const [showDone, setShowDone] = useState(false)
-  const [done, setDone] = useState<Set<string>>(new Set())
+  const { isActionDone, setActionDone } = useWorkspace()
+  const { can } = useSession()
+  const editable = can('workspace:write')
 
+  // Evaluated once per mount so every row in a render agrees on "today".
   const now = useMemo(() => new Date(), [])
 
   const rows: Row[] = useMemo(
     () =>
       MEETINGS.flatMap((meeting) => meeting.actionItems.map((item) => ({ item, meeting }))).sort(
-        (a, b) => (a.item.due ?? '9999').localeCompare(b.item.due ?? '9999'),
+        (a, b) => (a.item.due ?? UNDATED).localeCompare(b.item.due ?? UNDATED),
       ),
     [],
   )
@@ -31,32 +38,32 @@ export function Actions() {
     return PEOPLE.filter((p) => ids.has(p.id))
   }, [rows])
 
-  const isDone = (row: Row) => (done.has(row.item.id) ? !row.item.done : Boolean(row.item.done))
+  const done = (row: Row) => isActionDone(row.meeting, row.item.id)
 
   const visible = rows
     .filter((r) => owner === 'all' || r.item.owner === owner)
-    .filter((r) => showDone || !isDone(r))
+    .filter((r) => showDone || !done(r))
 
-  const openCount = rows.filter((r) => !isDone(r)).length
-
-  const toggle = (id: string) =>
-    setDone((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
+  const openCount = rows.filter((r) => !done(r)).length
+  const overdueCount = rows.filter(
+    (r) => !done(r) && r.item.due && isOverdue(r.item.due, now),
+  ).length
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-7 md:px-6">
       <h1 className="text-2xl font-semibold tracking-tight text-white">Action items</h1>
       <p className="mt-1 text-sm text-ink-400">
-        {openCount} open across {MEETINGS.filter((m) => m.actionItems.length > 0).length} meetings.
+        {openCount} open across {MEETINGS.filter((m) => m.actionItems.length > 0).length} meetings
+        {overdueCount > 0 && <span className="text-amber-300"> · {overdueCount} overdue</span>}.
         Every one links back to the second it was committed to.
       </p>
 
       <div className="mt-5 flex flex-wrap items-center gap-2">
+        <label className="sr-only" htmlFor="owner-filter">
+          Filter by owner
+        </label>
         <select
+          id="owner-filter"
           value={owner}
           onChange={(e) => setOwner(e.target.value)}
           className="rounded-lg border border-ink-700 bg-ink-900 px-2.5 py-2 text-[13px] text-ink-200 outline-none focus:border-brand-500/60"
@@ -80,23 +87,26 @@ export function Actions() {
       </div>
 
       <div className="mt-4 space-y-1.5">
-        {visible.map(({ item, meeting }) => {
-          const complete = isDone({ item, meeting })
+        {visible.map((row) => {
+          const { item, meeting } = row
+          const complete = done(row)
           return (
             <div
-              key={`${meeting.id}-${item.id}`}
+              key={`${meeting.id}:${item.id}`}
               className={`rise flex gap-3 rounded-xl border border-ink-800 bg-ink-900 p-3.5 ${
                 complete ? 'opacity-55' : ''
               }`}
             >
               <button
-                onClick={() => toggle(item.id)}
-                aria-label={complete ? 'Mark as open' : 'Mark as done'}
+                onClick={() => setActionDone(meeting.id, item.id, !complete)}
+                disabled={!editable}
+                aria-pressed={complete}
+                aria-label={complete ? `Reopen: ${item.text}` : `Complete: ${item.text}`}
                 className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors ${
                   complete
                     ? 'border-emerald-500 bg-emerald-500 text-white'
-                    : 'border-ink-600 hover:border-brand-500'
-                }`}
+                    : 'border-ink-600 enabled:hover:border-brand-500'
+                } disabled:cursor-not-allowed disabled:opacity-50`}
               >
                 {complete && <Icon path={ICONS.check} className="h-3 w-3" />}
               </button>
@@ -120,7 +130,7 @@ export function Actions() {
                   )}
                   {item.due && !complete && (
                     <Pill tone={isOverdue(item.due, now) ? 'warn' : 'default'}>
-                      {dueLabel(item.due)}
+                      {dueLabel(item.due, now)}
                     </Pill>
                   )}
                   <Link

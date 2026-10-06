@@ -1,12 +1,13 @@
 # Recap
 
-An AI meeting notetaker — a rebuild of [fathom.video](https://fathom.video), built in a
-two-hour window.
+An AI meeting notetaker — a rebuild of [fathom.video](https://fathom.video).
 
 Records, transcribes and summarises meetings, then makes the result navigable: playback
 locked to a transcript, summaries you can re-cut by template, action items that link back
 to the second they were committed to, clips you can share with someone who was not on the
 call, and search across every word anyone has said.
+
+**Live:** https://mujtabajunaid.github.io/recap/ · **Licence:** MIT
 
 ## Running it
 
@@ -15,18 +16,21 @@ npm install
 npm run dev
 ```
 
-Build and preview the production bundle:
+| Command | What it does |
+| --- | --- |
+| `npm test` | Unit and component tests (vitest + Testing Library) |
+| `npm run lint` | oxlint |
+| `npm run build` | Typechecks app and config projects, then builds |
+| `npm run walkthrough` | Drives a real browser through every user flow, screenshots each step, and fails loudly on console errors |
+| `npm run check:overflow` | Reports any element wider than a 390px viewport |
 
-```
-npm run build
-npm run preview
-```
+CI runs `lint`, `test` and `build` — the same commands available locally.
 
 ## What is real and what is stubbed
 
 The capture layer is stubbed. This is deliberate and the brief permits it — a bot joining
 a Zoom call is infrastructure, not product judgement, and the budget went to the surface
-where the product actually earns its keep.
+where the product earns its keep.
 
 **Stubbed**
 
@@ -34,30 +38,85 @@ where the product actually earns its keep.
   `usePlayback`, over the real transcript timeline. Every consumer is written against
   `currentTime` semantics and would work unchanged against a `<video>` element.
 - Summarisation. Summaries are authored seed content rather than live model output.
-- Auth and calendar OAuth. Signed-in state is represented, not enforced.
+- Calendar OAuth. Connected state is represented, not negotiated.
 
 **Real**
 
 - Everything downstream of the transcript. Transcript sync, seeking, chapters, search
-  ranking, talk-time analytics, clip boundaries and the public share route are all
-  computed from the seed data at runtime, not hardcoded results.
+  ranking, talk-time analytics, clip boundaries, redaction and the public share route are
+  all computed from the seed data at runtime.
+- Workspace state. Completed action items and clips you create persist, survive a reload,
+  and stay consistent across tabs.
 
 ## Architecture
 
 ```
 src/
-  data/           seed meetings, people, shared clips; the type contract in types.ts
-  lib/            derived layer — analytics, search, formatting, the playback clock
-  components/     Shell, Player, Transcript, Panels, ShareDialog, primitives
-  routes/         Meetings, MeetingDetail, Search, Actions, HighlightsFeed, SharedClipPage
+  data/       seed meetings, people, shared clips; the type contract in types.ts
+  lib/        derived layer — analytics, search, redaction, formatting, playback clock
+  state/      session (auth model) and workspace (mutable state) providers
+  components/ Shell, Player, Transcript, Panels, ShareDialog, ErrorBoundary, primitives
+  routes/     Meetings, MeetingDetail, Search, Actions, HighlightsFeed, SharedClipPage, SignIn
 ```
 
-Nothing derivable is stored. Talk time, speaker timelines, meeting insights and the
-search index are all computed from the transcript, so the seed data has exactly one
-source of truth per fact and the two cannot drift.
+**Nothing derivable is stored.** Talk time, speaker timelines, meeting insights and the
+search index are computed from the transcript. Precomputing them into the seed file would
+let the two drift silently the moment a line of dialogue changed.
 
-Talk time is estimated from word counts clamped to the gap before the next line. It is a
-speaking-share signal, not diarisation output, and the UI says so where it is shown.
+**Talk time is an estimate**, from word counts clamped to the gap before the next line. It
+is a speaking-share signal, not diarisation output, and the UI says so where it is shown.
+
+### Correctness properties worth knowing
+
+- **Action ids are only unique within a meeting** — several meetings ship an `a1`. Every
+  cross-meeting reference is qualified as `meetingId:actionId`. Without this, ticking one
+  meeting's item ticks another's. Covered by tests in `src/state/workspace.test.tsx`.
+- **Completion stores a resolved value, not a toggle.** `setActionDone(id, true)` applied
+  twice is a no-op. A toggle set would be order-dependent and non-idempotent.
+- **Clip ids are derived from `(meetingId, start, end)`.** Clipping the same window twice
+  produces the same id, so the second attempt is an upsert rather than a duplicate.
+- **Multi-tab writes converge.** Both providers listen for `storage` events, so signing
+  out or completing an item in one tab is reflected in the others instead of being
+  silently overwritten by whichever tab writes last.
+- **The playback loop keeps its reducer pure.** Stopping at the end is handled by an
+  effect, not by dispatching a second state update from inside the first.
+- **Storage access never throws.** Private browsing, blocked cookies and quota exhaustion
+  all degrade to in-memory state rather than a blank page.
+- **The meeting route is keyed by id**, so navigating between meetings remounts rather
+  than leaking the previous meeting's playhead, template and tab.
+
+## Security and privacy
+
+Read `src/state/session.tsx` before extending the auth model — the trust boundary is
+documented there.
+
+- **This build has no server**, so sign-in is an access *model*, not access *control*. It
+  decides what the UI offers; it protects nothing, because nothing secret ships. The seed
+  data is public fixture content. The shape is the one a real implementation needs, so the
+  swap is mechanical: `signIn` exchanges credentials for a token, `user` derives from a
+  verified token, and `can()` moves server-side and is re-checked per request.
+- **Share links are public by design** — the recipient has no account. The page renders
+  only the clip and its transcript. Server-side, a share token would resolve to a clip and
+  the surrounding meeting would never be sent to the client at all.
+- **PII redaction at the public boundary.** `lib/redaction.ts` masks emails, card and
+  account numbers, phone numbers and credential-shaped strings in clip transcripts before
+  they render on a share page. Defence in depth, not the control.
+- **No transcript content is ever logged**, including from the error boundary.
+- **CSP** is set via meta tag: `default-src 'self'`, no inline or remote script, no
+  `object-src`. `frame-ancestors` and `X-Content-Type-Options` need response headers,
+  which static Pages hosting cannot set — behind a server, send both.
+- No secrets in the repository; `npm audit` is clean for production dependencies.
+
+## How it was verified
+
+No visual check is possible from a terminal alone, so `scripts/walkthrough.mjs` drives
+Chromium through the real flows — sign-in, playback, seeking by transcript line, template
+switching, ticking an action, clipping, re-clipping, analytics, cross-meeting navigation,
+search, the anonymous share page, and two mobile viewports — capturing a screenshot per
+step and failing on any console error, page error or failed request.
+
+`scripts/check-overflow.mjs` measures every element against a 390px viewport. It is what
+found the mobile layout break that the eye missed in a desktop screenshot.
 
 ## Deployment
 
@@ -68,13 +127,10 @@ with no configuration to keep in sync.
 Pages has no SPA rewrite, so a build plugin emits a real `index.html` for every route —
 the list comes from the same seed data the router reads, so the two cannot drift. Deep
 links get a genuine 200 rather than rendering out of a 404 response, which matters for a
-shared clip link pasted anywhere that unfurls it. `404.html` stays as the fallback for
-unrecognised paths.
-
-CI runs `npm run lint` and `npm run build`, the same two commands available locally.
+shared clip link pasted anywhere that unfurls it. `404.html` stays as the fallback.
 
 ## Agent logs
 
-`.agent-logs/` holds the decision record for the session that built this: the brief, the
-stack decision and the bug found while verifying it, the scope reasoning, the
-implementation notes, and the review pass.
+`.agent-logs/` holds the decision record for the sessions that built this: the brief, the
+stack decision, the scope reasoning, the implementation notes, the review pass, and the
+hardening pass.

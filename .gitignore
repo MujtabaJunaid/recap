@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Walkthrough output; regenerate with `npm run walkthrough`
+screenshots/

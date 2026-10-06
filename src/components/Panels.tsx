@@ -1,10 +1,12 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { ActionItem, Highlight, Meeting, TemplateId } from '../data/types'
 import { TEMPLATE_LABELS, TEMPLATES } from '../data'
 import { person } from '../data/people'
 import { Avatar, EmptyState, Icon, ICONS, Pill } from './primitives'
 import { dueLabel, isOverdue, timecode } from '../lib/format'
 import { meetingInsights, speakerStats } from '../lib/analytics'
+import { useWorkspace } from '../state/workspace'
+import { useSession } from '../state/session'
 
 export function SummaryPanel({
   meeting,
@@ -115,31 +117,44 @@ export function SummaryPanel({
 }
 
 export function ActionItems({
-  items,
+  meeting,
   onSeek,
-  completed,
-  onToggle,
 }: {
-  items: ActionItem[]
+  meeting: Meeting
   onSeek: (t: number) => void
-  completed: Set<string>
-  onToggle: (id: string) => void
 }) {
-  if (items.length === 0) {
+  const { isActionDone, setActionDone } = useWorkspace()
+  const { can } = useSession()
+
+  if (meeting.actionItems.length === 0) {
     return <EmptyState title="No action items" detail="Nothing in this call was committed to." />
   }
 
-  const isDone = (item: ActionItem) =>
-    completed.has(item.id) ? !item.done : Boolean(item.done)
+  const done = (item: ActionItem) => isActionDone(meeting, item.id)
+  const open = meeting.actionItems.filter((i) => !done(i))
+  const complete = meeting.actionItems.filter(done)
 
-  const open = items.filter((i) => !isDone(i))
-  const done = items.filter(isDone)
+  const toggle = (item: ActionItem) => setActionDone(meeting.id, item.id, !done(item))
 
   return (
     <div className="space-y-4">
-      <Group title={`Open (${open.length})`} items={open} onSeek={onSeek} onToggle={onToggle} done={false} />
-      {done.length > 0 && (
-        <Group title={`Done (${done.length})`} items={done} onSeek={onSeek} onToggle={onToggle} done />
+      <Group
+        title={`Open (${open.length})`}
+        items={open}
+        onSeek={onSeek}
+        onToggle={toggle}
+        done={false}
+        editable={can('workspace:write')}
+      />
+      {complete.length > 0 && (
+        <Group
+          title={`Done (${complete.length})`}
+          items={complete}
+          onSeek={onSeek}
+          onToggle={toggle}
+          done
+          editable={can('workspace:write')}
+        />
       )}
     </div>
   )
@@ -151,12 +166,14 @@ function Group({
   onSeek,
   onToggle,
   done,
+  editable,
 }: {
   title: string
   items: ActionItem[]
   onSeek: (t: number) => void
-  onToggle: (id: string) => void
+  onToggle: (item: ActionItem) => void
   done: boolean
+  editable: boolean
 }) {
   if (items.length === 0) return null
   return (
@@ -173,13 +190,15 @@ function Group({
             }`}
           >
             <button
-              onClick={() => onToggle(item.id)}
-              aria-label={done ? 'Mark as open' : 'Mark as done'}
+              onClick={() => onToggle(item)}
+              disabled={!editable}
+              aria-pressed={done}
+              aria-label={done ? `Reopen: ${item.text}` : `Complete: ${item.text}`}
               className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors ${
                 done
                   ? 'border-emerald-500 bg-emerald-500 text-white'
-                  : 'border-ink-600 hover:border-brand-500'
-              }`}
+                  : 'border-ink-600 enabled:hover:border-brand-500'
+              } disabled:cursor-not-allowed disabled:opacity-50`}
             >
               {done && <Icon path={ICONS.check} className="h-2.5 w-2.5" />}
             </button>
@@ -196,7 +215,9 @@ function Group({
                 ) : (
                   <Pill tone="warn">Unassigned</Pill>
                 )}
-                {item.due && !done && <Pill tone={isOverdue(item.due) ? 'warn' : 'default'}>{dueLabel(item.due)}</Pill>}
+                {item.due && !done && (
+                  <Pill tone={isOverdue(item.due) ? 'warn' : 'default'}>{dueLabel(item.due)}</Pill>
+                )}
                 <button
                   onClick={() => onSeek(item.t)}
                   className="font-mono text-[11px] tabular-nums text-ink-400 transition-colors hover:text-brand-400"
@@ -284,21 +305,25 @@ export function Highlights({
 }
 
 export function Analytics({ meeting, onSeek }: { meeting: Meeting; onSeek: (t: number) => void }) {
-  const stats = speakerStats(meeting)
-  const insights = meetingInsights(meeting)
+  const stats = useMemo(() => speakerStats(meeting), [meeting])
+  const insights = useMemo(() => meetingInsights(meeting), [meeting])
   const max = stats[0]?.share || 1
   const [sort, setSort] = useState<'time' | 'turns'>('time')
+  const longestChapter = useMemo(
+    () => Math.max(1, ...meeting.chapters.map((c) => c.end - c.start)),
+    [meeting],
+  )
   const ordered =
     sort === 'time' ? stats : [...stats].sort((a, b) => b.turns - a.turns)
 
   return (
     <div className="space-y-4">
       {insights.length > 0 && (
-        <div className="grid grid-cols-2 gap-2">
+        <div className="flex flex-wrap gap-2">
           {insights.map((i) => (
             <div
               key={i.label}
-              className={`rounded-lg border p-2.5 ${
+              className={`min-w-[8rem] flex-1 rounded-lg border p-2.5 ${
                 i.tone === 'warn'
                   ? 'border-amber-500/25 bg-amber-500/5'
                   : 'border-ink-800 bg-ink-900'
@@ -380,7 +405,7 @@ export function Analytics({ meeting, onSeek }: { meeting: Meeting; onSeek: (t: n
                 <span className="h-4 flex-1 overflow-hidden rounded bg-ink-800">
                   <span
                     className="block h-full rounded bg-ink-600"
-                    style={{ width: `${((c.end - c.start) / meeting.durationSec) * 100}%` }}
+                    style={{ width: `${((c.end - c.start) / longestChapter) * 100}%` }}
                   />
                 </span>
                 <span className="w-12 shrink-0 text-right font-mono text-[11px] tabular-nums text-ink-400">

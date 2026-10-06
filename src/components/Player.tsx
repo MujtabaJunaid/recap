@@ -1,5 +1,5 @@
-import { useMemo, useRef } from 'react'
-import type { Meeting } from '../data/types'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { Highlight, Meeting } from '../data/types'
 import type { Playback } from '../lib/usePlayback'
 import { Avatar, Icon, ICONS } from './primitives'
 import { person } from '../data/people'
@@ -12,23 +12,55 @@ const BUCKETS = 180
 export function Player({
   meeting,
   playback,
+  highlights,
   activeSpeaker,
   onClip,
 }: {
   meeting: Meeting
   playback: Playback
+  highlights: Highlight[]
   activeSpeaker?: string
-  onClip: () => void
+  onClip?: () => void
 }) {
   const { time, playing, rate, seek, toggle, skip, setRate } = playback
   const track = useRef<HTMLDivElement>(null)
+  const [dragging, setDragging] = useState(false)
   const grid = useMemo(() => speakerTimeline(meeting, BUCKETS), [meeting])
   const progress = (time / meeting.durationSec) * 100
 
-  const scrub = (e: React.MouseEvent<HTMLDivElement>) => {
-    const box = track.current?.getBoundingClientRect()
-    if (!box) return
-    seek(((e.clientX - box.left) / box.width) * meeting.durationSec)
+  const seekToClientX = useCallback(
+    (clientX: number) => {
+      const box = track.current?.getBoundingClientRect()
+      if (!box || box.width === 0) return
+      const ratio = (clientX - box.left) / box.width
+      seek(Math.min(1, Math.max(0, ratio)) * meeting.durationSec)
+    },
+    [seek, meeting.durationSec],
+  )
+
+  // Dragging is tracked on the window so the pointer can leave the track mid-scrub
+  // without the playhead sticking.
+  useEffect(() => {
+    if (!dragging) return
+    const move = (e: PointerEvent) => seekToClientX(e.clientX)
+    const up = () => setDragging(false)
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
+    return () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+    }
+  }, [dragging, seekToClientX])
+
+  const onTrackKeyDown = (e: React.KeyboardEvent) => {
+    const step = e.shiftKey ? 60 : 10
+    if (e.key === 'ArrowRight') { e.preventDefault(); skip(step) }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); skip(-step) }
+    else if (e.key === 'Home') { e.preventDefault(); seek(0) }
+    else if (e.key === 'End') { e.preventDefault(); seek(meeting.durationSec) }
+    else if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggle() }
   }
 
   const activeChapter = meeting.chapters.find((c) => time >= c.start && time < c.end)
@@ -58,7 +90,21 @@ export function Player({
               </div>
             </div>
           ) : (
-            <p className="text-sm text-ink-400">No one speaking</p>
+            <div className="w-full px-6">
+              <div className="mx-auto grid max-w-md grid-cols-4 gap-x-3 gap-y-3">
+                {meeting.participants.map((p) => (
+                  <div key={p} className="flex min-w-0 flex-col items-center gap-1.5 text-center">
+                    <Avatar id={p} size="md" />
+                    <span className="w-full truncate text-[10px] leading-tight text-ink-400">
+                      {person(p).name.split(' ')[0]}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-4 text-center text-[12px] text-ink-400">
+                {playing ? 'Between speakers' : 'Press play to follow the transcript'}
+              </p>
+            </div>
           )}
         </div>
 
@@ -92,19 +138,31 @@ export function Player({
 
         <div
           ref={track}
-          onClick={scrub}
-          className="group relative h-10 cursor-pointer select-none rounded-md bg-ink-950/60 px-px py-1"
+          role="slider"
+          tabIndex={0}
+          aria-label="Seek through the recording"
+          aria-valuemin={0}
+          aria-valuemax={Math.round(meeting.durationSec)}
+          aria-valuenow={Math.round(time)}
+          aria-valuetext={`${timecode(time)} of ${timecode(meeting.durationSec)}`}
+          onPointerDown={(e) => {
+            e.preventDefault()
+            setDragging(true)
+            seekToClientX(e.clientX)
+          }}
+          onKeyDown={onTrackKeyDown}
+          className="group relative h-10 cursor-pointer touch-none select-none rounded-md bg-ink-950/60 px-px py-1 outline-none focus-visible:ring-2 focus-visible:ring-brand-500/60"
         >
-          <div className="flex h-full flex-col justify-center gap-px">
+          <div className="flex h-full flex-col justify-center gap-[2px]">
             {meeting.participants.slice(0, 8).map((p) => (
-              <div key={p} className="flex h-[3px] gap-px">
+              <div key={p} className="flex h-[4px] gap-[1px]" title={person(p).name}>
                 {grid[p]?.map((v, i) => (
                   <span
                     key={i}
                     className="flex-1 rounded-[1px]"
                     style={{
-                      background: v > 0 ? 'var(--color-brand-400)' : 'transparent',
-                      opacity: v > 0 ? 0.55 + v * 0.45 : 0,
+                      background: v > 0 ? 'var(--color-brand-400)' : 'var(--color-ink-800)',
+                      opacity: v > 0 ? 0.6 + v * 0.4 : 0.5,
                     }}
                   />
                 ))}
@@ -112,7 +170,7 @@ export function Player({
             ))}
           </div>
 
-          {meeting.highlights.map((h) => (
+          {highlights.map((h) => (
             <span
               key={h.id}
               title={h.title}
@@ -132,7 +190,7 @@ export function Player({
           </span>
         </div>
 
-        <div className="mt-2.5 flex items-center gap-2">
+        <div className="mt-2.5 flex flex-wrap items-center gap-2">
           <button
             onClick={toggle}
             aria-label={playing ? 'Pause' : 'Play'}
@@ -158,7 +216,7 @@ export function Player({
             <Icon path={ICONS.forward} />
           </button>
 
-          <span className="ml-1 font-mono text-xs tabular-nums text-ink-300">
+          <span className="ml-1 whitespace-nowrap font-mono text-xs tabular-nums text-ink-300">
             {timecode(time)} <span className="text-ink-600">/</span> {timecode(meeting.durationSec)}
           </span>
 

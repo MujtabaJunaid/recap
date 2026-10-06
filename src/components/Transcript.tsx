@@ -20,12 +20,21 @@ export function Transcript({
   const [filter, setFilter] = useState('')
   const [speaker, setSpeaker] = useState('all')
   const activeRef = useRef<HTMLButtonElement>(null)
+  const paneRef = useRef<HTMLDivElement>(null)
 
   const activeIndex = findActive(meeting, time)
 
   useEffect(() => {
     if (!autoScroll || filter) return
-    activeRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    const pane = paneRef.current
+    const row = activeRef.current
+    if (!pane || !row) return
+    // scrollIntoView walks every scrollable ancestor and drags the window with it, which
+    // yanks the page while the recording plays. Scroll only the transcript pane.
+    pane.scrollTo({
+      top: row.offsetTop - pane.clientHeight / 2 + row.clientHeight / 2,
+      behavior: 'smooth',
+    })
   }, [activeIndex, autoScroll, filter])
 
   const query = filter.trim()
@@ -36,8 +45,8 @@ export function Transcript({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2 border-b border-ink-800 px-3 py-2">
-        <div className="relative flex-1">
+      <div className="flex flex-wrap items-center gap-2 border-b border-ink-800 px-3 py-2">
+        <div className="relative min-w-[8rem] flex-1">
           <Icon
             path={ICONS.search}
             className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-400"
@@ -52,7 +61,7 @@ export function Transcript({
         <select
           value={speaker}
           onChange={(e) => setSpeaker(e.target.value)}
-          className="rounded-md border border-ink-700 bg-ink-950 px-2 py-1.5 text-[13px] text-ink-200 outline-none focus:border-brand-500/60"
+          className="max-w-[9rem] rounded-md border border-ink-700 bg-ink-950 px-2 py-1.5 text-[13px] text-ink-200 outline-none focus:border-brand-500/60"
         >
           <option value="all">Everyone</option>
           {meeting.participants.map((p) => (
@@ -69,7 +78,7 @@ export function Transcript({
         </p>
       )}
 
-      <div className="flex-1 overflow-y-auto px-1.5 py-2">
+      <div ref={paneRef} className="relative flex-1 overflow-y-auto px-1.5 py-2">
         {lines.map(({ line, index }, row) => {
           // Group against the previous *visible* line, so filtering never hides a name.
           const previous = lines[row - 1]

@@ -1,16 +1,31 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 /**
- * Drives a playhead without a media element. The capture and storage layers are
- * stubbed in this build, so playback is a wall-clock simulation over the transcript
- * timeline; every consumer of a real <video> currentTime works unchanged against it.
+ * Drives a playhead without a media element. The capture and storage layers are stubbed
+ * in this build, so playback is a wall-clock simulation over the transcript timeline;
+ * every consumer is written against `currentTime` semantics and works unchanged against
+ * a real <video>.
+ *
+ * `floorSec` bounds the window from below, so a clip player replays from the clip start
+ * rather than from zero.
  */
 export function usePlayback(durationSec: number, floorSec = 0) {
   const [time, setTime] = useState(floorSec)
-  const [playing, setPlaying] = useState(false)
+  // User intent. Whether the clock is actually running is derived below, so reaching the
+  // end needs no state update and no effect to undo one.
+  const [requested, setRequested] = useState(false)
+
   const [rate, setRate] = useState(1)
   const frame = useRef<number | undefined>(undefined)
-  const last = useRef<number>(0)
+  const last = useRef(0)
+
+  const atEnd = time >= durationSec
+  const playing = requested && !atEnd
+
+  const clamp = useCallback(
+    (to: number) => Math.max(floorSec, Math.min(durationSec, to)),
+    [floorSec, durationSec],
+  )
 
   useEffect(() => {
     if (!playing) return
@@ -19,47 +34,40 @@ export function usePlayback(durationSec: number, floorSec = 0) {
     const tick = (now: number) => {
       const delta = ((now - last.current) / 1000) * rate
       last.current = now
-      setTime((prev) => {
-        const next = prev + delta
-        if (next >= durationSec) {
-          setPlaying(false)
-          return durationSec
-        }
-        return next
-      })
+      // Pure updater: clamping is the only rule, and the loop unmounts itself via
+      // `playing` turning false once `time` reaches the end.
+      setTime((prev) => Math.min(durationSec, prev + delta))
       frame.current = requestAnimationFrame(tick)
     }
 
     frame.current = requestAnimationFrame(tick)
     return () => {
       if (frame.current !== undefined) cancelAnimationFrame(frame.current)
+      frame.current = undefined
     }
   }, [playing, rate, durationSec])
 
-  const seek = useCallback(
-    (to: number) => setTime(Math.max(floorSec, Math.min(durationSec, to))),
-    [durationSec, floorSec],
-  )
+  const seek = useCallback((to: number) => setTime(clamp(to)), [clamp])
 
-  const toggle = useCallback(() => {
-    setPlaying((p) => {
-      // Replaying a finished clip restarts at the window start, not at zero.
-      if (!p && time >= durationSec) setTime(floorSec)
-      return !p
-    })
-  }, [time, durationSec, floorSec])
-
-  const skip = useCallback((by: number) => seek(time + by), [seek, time])
+  const skip = useCallback((by: number) => setTime((prev) => clamp(prev + by)), [clamp])
 
   const play = useCallback(
     (from?: number) => {
-      if (from !== undefined) seek(from)
-      setPlaying(true)
+      if (from !== undefined) setTime(clamp(from))
+      else setTime((prev) => (prev >= durationSec ? floorSec : prev))
+      setRequested(true)
     },
-    [seek],
+    [clamp, durationSec, floorSec],
   )
 
-  return { time, playing, rate, seek, toggle, skip, play, setRate, setPlaying }
+  const pause = useCallback(() => setRequested(false), [])
+
+  const toggle = useCallback(() => {
+    if (playing) setRequested(false)
+    else play()
+  }, [playing, play])
+
+  return { time, playing, rate, seek, skip, play, pause, toggle, setRate }
 }
 
 export type Playback = ReturnType<typeof usePlayback>

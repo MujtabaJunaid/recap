@@ -3,6 +3,7 @@ import { getMeeting, getSharedClip } from '../data'
 import { person } from '../data/people'
 import { Avatar, Icon, ICONS } from '../components/primitives'
 import { usePlayback } from '../lib/usePlayback'
+import { redactLines } from '../lib/redaction'
 import { longDate, timecode } from '../lib/format'
 
 export function SharedClipPage() {
@@ -15,7 +16,11 @@ export function SharedClipPage() {
   const end = highlight?.end ?? 0
   const { time, playing, toggle, seek } = usePlayback(end, start)
 
-  const lines = meeting?.transcript.filter((l) => l.t >= start && l.t <= end) ?? []
+  // Public boundary: the viewer is a stranger holding a URL, so incidental identifiers
+  // in the clip's own lines are masked before they reach the DOM.
+  const { lines, removed } = redactLines(
+    meeting?.transcript.filter((l) => l.t >= start && l.t <= end) ?? [],
+  )
 
   if (!clip || !meeting || !highlight) {
     return (
@@ -158,6 +163,11 @@ export function SharedClipPage() {
         <p className="mt-3 text-[12px] leading-relaxed text-ink-400">
           You are seeing only this clip. The rest of the meeting, its summary and its action items
           stay inside {person(clip.sharedBy).org}.
+          {removed.length > 0 && (
+            <span className="mt-1 block text-ink-300">
+              Some details were masked for this public link: {removed.join(', ')}.
+            </span>
+          )}
         </p>
 
         <div className="mt-7 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-ink-800 bg-ink-900 p-4">
