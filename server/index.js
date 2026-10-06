@@ -457,7 +457,10 @@ function corsHeaders(origin) {
   const allowed = origin && ALLOWED_ORIGINS.includes(origin)
   return {
     'access-control-allow-origin': allowed ? origin : ALLOWED_ORIGINS[0],
-    'access-control-allow-methods': 'POST, OPTIONS',
+    // Must list every method the API actually serves. GET and PUT were added with the
+    // state endpoints and omitted here, so the browser rejected the preflight and
+    // per-user sync failed silently — invisible to curl, which sends no preflight.
+    'access-control-allow-methods': 'GET, POST, PUT, OPTIONS',
     'access-control-allow-headers': 'content-type, authorization',
     'access-control-max-age': '86400',
     vary: 'origin',
