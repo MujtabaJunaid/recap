@@ -6,6 +6,7 @@ import { Avatar, Icon, ICONS, Pill } from '../components/primitives'
 import { dueLabel, isOverdue, relativeDay, timecode } from '../lib/format'
 import type { ActionItem, Meeting } from '../data/types'
 import { useWorkspace } from '../state/workspace'
+import { ActionPlanPanel, WorkStylePicker } from '../components/ActionPlan'
 import { useSession } from '../state/session'
 
 interface Row {
@@ -58,7 +59,11 @@ export function Actions() {
         Every one links back to the second it was committed to.
       </p>
 
-      <div className="mt-5 flex flex-wrap items-center gap-2">
+      <div className="mt-5">
+        <WorkStylePicker />
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center gap-2">
         <label className="sr-only" htmlFor="owner-filter">
           Filter by owner
         </label>
@@ -143,6 +148,7 @@ export function Actions() {
                   </Link>
                   <span className="text-[11px] text-ink-600">{relativeDay(meeting.date)}</span>
                 </div>
+                {!complete && <ActionPlanPanel item={item} meeting={meeting} />}
               </div>
             </div>
           )

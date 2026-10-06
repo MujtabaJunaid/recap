@@ -1,0 +1,13 @@
+{
+  "name": "recap-action-plan-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Holds the provider key so the static frontend never has to.",
+  "license": "MIT",
+  "engines": { "node": "22.x" },
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  }
+}

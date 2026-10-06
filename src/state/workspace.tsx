@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react'
 import type { Highlight, Meeting } from '../data/types'
+import { DEFAULT_WORK_STYLE, type WorkStyleId } from '../lib/coaching'
 import { onExternalChange, readJSON, storageKey, writeJSON } from '../lib/storage'
 
 const STATE_VERSION = 1
@@ -30,14 +31,17 @@ interface WorkspaceState {
   /** Resolved done-state per qualified action key, not a toggle set. See `setActionDone`. */
   actions: Record<string, boolean>
   clips: Record<string, LocalClip>
+  /** Self-selected, never inferred. See lib/coaching.ts. */
+  workStyle: WorkStyleId
 }
 
-const EMPTY: WorkspaceState = { actions: {}, clips: {} }
+const EMPTY: WorkspaceState = { actions: {}, clips: {}, workStyle: DEFAULT_WORK_STYLE }
 
 type Action =
   | { type: 'action/set'; key: string; done: boolean }
   | { type: 'clip/add'; clip: LocalClip }
   | { type: 'clip/remove'; id: string }
+  | { type: 'style/set'; style: WorkStyleId }
   | { type: 'state/replace'; state: WorkspaceState }
 
 function reducer(state: WorkspaceState, action: Action): WorkspaceState {
@@ -57,6 +61,10 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
       delete clips[action.id]
       return { ...state, clips }
     }
+    case 'style/set': {
+      if (state.workStyle === action.style) return state
+      return { ...state, workStyle: action.style }
+    }
     case 'state/replace':
       return action.state
   }
@@ -64,9 +72,14 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
 
 function hydrate(raw: unknown): WorkspaceState {
   const value = raw as Partial<WorkspaceState> | null
+  const styles: WorkStyleId[] = ['momentum', 'precise', 'steady', 'deep', 'collaborative']
   return {
     actions: value?.actions && typeof value.actions === 'object' ? value.actions : {},
     clips: value?.clips && typeof value.clips === 'object' ? value.clips : {},
+    workStyle:
+      value?.workStyle && styles.includes(value.workStyle)
+        ? value.workStyle
+        : DEFAULT_WORK_STYLE,
   }
 }
 
@@ -76,6 +89,8 @@ interface WorkspaceApi {
   clipsFor: (meetingId: string) => LocalClip[]
   addClip: (clip: LocalClip) => void
   removeClip: (id: string) => void
+  workStyle: WorkStyleId
+  setWorkStyle: (style: WorkStyleId) => void
   reset: () => void
 }
 
@@ -109,6 +124,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         Object.values(state.clips).filter((c) => c.meetingId === meetingId),
       addClip: (clip) => dispatch({ type: 'clip/add', clip }),
       removeClip: (id) => dispatch({ type: 'clip/remove', id }),
+      workStyle: state.workStyle,
+      setWorkStyle: (style) => dispatch({ type: 'style/set', style }),
       reset: () => dispatch({ type: 'state/replace', state: EMPTY }),
     }),
     [state],

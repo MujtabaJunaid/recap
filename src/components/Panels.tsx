@@ -6,6 +6,7 @@ import { Avatar, EmptyState, Icon, ICONS, Pill } from './primitives'
 import { dueLabel, isOverdue, timecode } from '../lib/format'
 import { meetingInsights, speakerStats } from '../lib/analytics'
 import { useWorkspace } from '../state/workspace'
+import { ActionPlanPanel, WorkStylePicker } from './ActionPlan'
 import { useSession } from '../state/session'
 
 export function SummaryPanel({
@@ -138,6 +139,9 @@ export function ActionItems({
 
   return (
     <div className="space-y-4">
+      <div className="flex justify-end">
+        <WorkStylePicker compact />
+      </div>
       <Group
         title={`Open (${open.length})`}
         items={open}
@@ -145,6 +149,7 @@ export function ActionItems({
         onToggle={toggle}
         done={false}
         editable={can('workspace:write')}
+        meeting={meeting}
       />
       {complete.length > 0 && (
         <Group
@@ -154,6 +159,7 @@ export function ActionItems({
           onToggle={toggle}
           done
           editable={can('workspace:write')}
+          meeting={meeting}
         />
       )}
     </div>
@@ -167,6 +173,7 @@ function Group({
   onToggle,
   done,
   editable,
+  meeting,
 }: {
   title: string
   items: ActionItem[]
@@ -174,6 +181,7 @@ function Group({
   onToggle: (item: ActionItem) => void
   done: boolean
   editable: boolean
+  meeting: Meeting
 }) {
   if (items.length === 0) return null
   return (
@@ -225,6 +233,7 @@ function Group({
                   {timecode(item.t)}
                 </button>
               </div>
+              {!done && <ActionPlanPanel item={item} meeting={meeting} />}
             </div>
           </div>
         ))}

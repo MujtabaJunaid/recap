@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync } from 'node:fs'
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
@@ -29,6 +29,20 @@ function staticRoutes(): Plugin {
     closeBundle() {
       const dist = resolve(__dirname, 'dist')
       const index = resolve(dist, 'index.html')
+
+      // connect-src stays 'self' unless a proxy is configured, so the default build
+      // cannot talk to anything at all.
+      const api = process.env.VITE_API_BASE_URL
+      if (api) {
+        const origin = new URL(api).origin
+        const html = readFileSync(index, 'utf8').replace(
+          "connect-src 'self'",
+          `connect-src 'self' ${origin}`,
+        )
+        writeFileSync(index, html)
+        this.info(`CSP connect-src extended to ${origin}`)
+      }
+
       copyFileSync(index, resolve(dist, '404.html'))
       for (const route of routes) {
         const dir = resolve(dist, route)
