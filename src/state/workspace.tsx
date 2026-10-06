@@ -186,7 +186,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         }).catch(() => {
           // Offline or rejected: the local copy still holds, and the next change retries.
         })
-      }, 800),
+        // 200ms, not 800. Writes here are small and infrequent — ticking an action,
+        // changing a style — and the only job of the delay is to coalesce a burst. At
+        // 800ms a reload or a quick navigation could beat the write, and the next
+        // server load would then hand back stale state and silently undo the change.
+      }, 200),
     [],
   )
 

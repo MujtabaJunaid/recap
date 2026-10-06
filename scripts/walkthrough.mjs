@@ -171,6 +171,8 @@ await check('loading the sample populates the workspace', async () => {
 })
 
 await check('the loaded sample survives a reload', async () => {
+  // Let the debounced write reach the server before throwing away the page.
+  await page.waitForTimeout(700)
   await page.reload({ waitUntil: 'networkidle' })
   await page.waitForSelector('h1:has-text("Meetings")', { timeout: 15_000 })
 })
@@ -288,9 +290,16 @@ await check('a generated plan opens and names its own provenance', async () => {
 await shot('action-plan')
 
 await check('changing work style changes the plan', async () => {
+  const picker = page.getByLabel('How you work best')
+  // Pick a style that is not the current one. The previous run's choice persists to
+  // the account now, so hardcoding "deep" could select what is already selected and
+  // then fail for having changed nothing.
+  const current = await picker.inputValue()
+  const target = current === 'deep' ? 'momentum' : 'deep'
+
   const first = page.locator('ol li').first()
   const before = (await first.textContent()) ?? ''
-  await page.getByLabel('How you work best').selectOption('deep')
+  await picker.selectOption(target)
   // Poll until the text actually changes rather than sampling once mid-flight.
   await page
     .waitForFunction(
@@ -303,7 +312,10 @@ await check('changing work style changes the plan', async () => {
     )
     .catch(() => {})
   const after = (await first.textContent()) ?? ''
-  assert(before !== after, `plan did not adapt to the style: "${before}" vs "${after}"`)
+  assert(
+    before !== after,
+    `plan did not adapt when switching ${current} -> ${target}: "${before}" vs "${after}"`,
+  )
 })
 await shot('action-plan-deep')
 
