@@ -40,6 +40,7 @@ import {
 import { ingest, looksLikeAudio, MAX_AUDIO_BYTES, normaliseMime } from './recordings.js'
 import { coach, validateContext } from './live-coach.js'
 import { summarise, validateTranscript } from './meetings.js'
+import { ask, validateAsk } from './ask.js'
 
 const PORT = process.env.PORT || 3000
 const API_KEY = process.env.GROQ_API_KEY
@@ -661,6 +662,7 @@ const server = createServer(async (req, res) => {
   const isCoach = req.method === 'POST' && req.url === '/api/live-coach'
   const meetingMatch = /^\/api\/meetings(?:\/(\d+))?$/.exec(req.url || '')
   const isMeetings = Boolean(meetingMatch)
+  const isAsk = req.method === 'POST' && req.url === '/api/ask'
 
   if (
     !isLogin &&
@@ -670,7 +672,8 @@ const server = createServer(async (req, res) => {
     !isPlan &&
     !isRecordings &&
     !isCoach &&
-    !isMeetings
+    !isMeetings &&
+    !isAsk
   ) {
     send(res, 404, { error: 'not found' }, cors)
     return
@@ -842,6 +845,53 @@ const server = createServer(async (req, res) => {
     } catch (error) {
       const tooLarge = error.name === 'PayloadTooLargeError'
       send(res, tooLarge ? 413 : 400, { error: error.message }, cors)
+    }
+    return
+  }
+
+  // ---- Ask across every meeting ----------------------------------------------------
+  if (isAsk) {
+    const session = requireSession(req)
+    if (!session) {
+      send(res, 401, { error: 'sign in required' }, { ...cors, 'www-authenticate': 'Bearer' })
+      return
+    }
+
+    const started = Date.now()
+    try {
+      const body = await readBody(req, MAX_TRANSCRIPT_BYTES)
+      const problem = validateAsk(body)
+      if (problem) {
+        send(res, 400, { error: 'invalid request', details: [problem] }, cors)
+        return
+      }
+      if (!API_KEY) {
+        send(res, 503, { error: 'ask is unavailable' }, cors)
+        return
+      }
+
+      const result = await ask(body.question, body.passages, API_KEY)
+      // Counts and timing only. The question and the passages are user content.
+      log('info', 'ask.answered', {
+        correlationId,
+        passages: body.passages.length,
+        citations: result.citations.length,
+        confident: result.confident,
+        durationMs: Date.now() - started,
+      })
+      send(res, 200, { result }, cors)
+    } catch (error) {
+      if (error.name === 'PayloadTooLargeError') {
+        send(res, 413, { error: 'payload too large' }, cors)
+        return
+      }
+      log('error', 'ask.failed', {
+        correlationId,
+        durationMs: Date.now() - started,
+        errorName: error?.name,
+        errorMessage: safeErrorMessage(error),
+      })
+      send(res, 502, { error: 'could not answer that' }, cors)
     }
     return
   }

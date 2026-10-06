@@ -8,6 +8,7 @@
  */
 export const STATIC_ROUTES = [
   'actions',
+  'ask',
   'highlights',
   'join',
   'record',
