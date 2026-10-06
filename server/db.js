@@ -48,11 +48,33 @@ pool.on('error', (error) => {
 })
 
 /**
- * Idempotent schema creation, run at boot. Small enough that a migration tool would be
- * more machinery than it saves; the moment a column needs altering, that changes.
+ * Idempotent schema creation, run at boot.
+ *
+ * `CREATE TABLE IF NOT EXISTS` is not atomic against a concurrent identical create:
+ * both sessions see no table, both proceed, and one fails with 23505 on
+ * `pg_type_typname_nsp_index`. That is not hypothetical — it happens whenever two
+ * dynos boot together, and it is how this was found.
+ *
+ * A session-level advisory lock serialises it. The lock id is arbitrary but must be
+ * stable across processes.
  */
+const MIGRATION_LOCK_ID = 8372019
+
 export async function migrate() {
-  await pool.query(`
+  const client = await pool.connect()
+  try {
+    await client.query('SELECT pg_advisory_lock($1)', [MIGRATION_LOCK_ID])
+    await runMigration(client)
+  } finally {
+    // Release before returning the connection, or the next borrower inherits the lock.
+    await client.query('SELECT pg_advisory_unlock($1)', [MIGRATION_LOCK_ID]).catch(() => {})
+    client.release()
+  }
+}
+
+async function runMigration(client) {
+  try {
+    await client.query(`
     CREATE TABLE IF NOT EXISTS users (
       id            BIGSERIAL PRIMARY KEY,
       email         TEXT NOT NULL,
@@ -69,6 +91,12 @@ export async function migrate() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
   `)
+  } catch (error) {
+    // 23505 (duplicate key on a catalogue index) and 42P07 (relation already exists)
+    // both mean another process won the race and the schema is present. Anything else
+    // is a real failure.
+    if (error?.code !== '23505' && error?.code !== '42P07') throw error
+  }
 }
 
 export function hashPassword(plaintext) {
