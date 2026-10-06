@@ -15,6 +15,9 @@ const base = (process.argv[2] ?? 'http://localhost:5180').replace(/\/$/, '')
 const outDir = process.argv[3] ?? 'screenshots'
 mkdirSync(outDir, { recursive: true })
 
+const DEMO_EMAIL = 'demo@recap.app'
+const DEMO_PASSWORD = 'recap-demo-2026'
+
 const problems = []
 const results = []
 let step = 0
@@ -122,11 +125,11 @@ await check('the password is never written to storage', async () => {
   assert(!leaked, 'a password string was found in localStorage')
 })
 
-await check('any email with the correct password signs in', async () => {
-  await page.fill('#email', 'someone.else@example.com')
-  await page.fill('#password', 'recap-demo-2026')
+await check('the demo account signs in', async () => {
+  await page.fill('#email', DEMO_EMAIL)
+  await page.fill('#password', DEMO_PASSWORD)
   await page.getByRole('button', { name: 'Continue' }).click()
-  await page.waitForSelector('h1:has-text("Meetings")', { timeout: 15_000 })
+  await page.waitForSelector('h1:has-text("Meetings")', { timeout: 20_000 })
 })
 await shot('meetings-list')
 
@@ -419,7 +422,8 @@ watch(mobilePage, 'mobile')
 
 await check('no horizontal overflow on any route at 390px', async () => {
   await mobilePage.goto(`${base}/signin`, { waitUntil: 'networkidle' })
-  await mobilePage.fill('#password', 'recap-demo-2026')
+  await mobilePage.fill('#email', DEMO_EMAIL)
+  await mobilePage.fill('#password', DEMO_PASSWORD)
   await mobilePage.getByRole('button', { name: 'Continue' }).click()
   await mobilePage.waitForTimeout(800)
 

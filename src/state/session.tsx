@@ -41,7 +41,10 @@ const KEY = storageKey('session', STATE_VERSION)
 
 const API_BASE = (import.meta.env?.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '')
 
-/** Used only when there is no server to verify against. See the note above. */
+/**
+ * Only reachable when no backend is configured, where there is nothing to verify
+ * against anyway. With the proxy configured, every login is a real account.
+ */
 const LOCAL_DEMO_PASSWORD = 'recap-demo-2026'
 
 export type SessionStatus = 'loading' | 'authenticated' | 'anonymous'
@@ -202,8 +205,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const body = (await response.json()) as AuthResponse
       if (!body.token) throw new SignInError('Sign-in service returned no token.')
 
-      // A shared-demo session carries no account row, so its state stays in the browser.
-      const hasAccount = Boolean(body.user?.displayName !== undefined && body.user?.email)
+      // Hosted login always resolves to a real account row now; the master password
+      // was removed, so there is no credential that authenticates without one.
+      const hasAccount = true
       const next: StoredSession = {
         userId: ME,
         email: body.user?.email ?? trimmed,

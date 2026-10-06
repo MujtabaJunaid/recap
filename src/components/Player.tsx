@@ -66,7 +66,7 @@ export function Player({
   const activeChapter = meeting.chapters.find((c) => time >= c.start && time < c.end)
 
   return (
-    <div className="overflow-hidden rounded-xl border border-ink-800 bg-ink-900">
+    <div className="overflow-hidden surface rounded-xl border border-ink-800 bg-ink-900">
       <div className="relative aspect-video bg-gradient-to-br from-ink-850 via-ink-900 to-ink-950">
         <div className="absolute inset-0 grid place-items-center">
           {activeSpeaker ? (

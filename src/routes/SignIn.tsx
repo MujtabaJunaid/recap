@@ -59,7 +59,7 @@ export function SignIn() {
     <div className="grid min-h-screen place-items-center px-4">
       <div className="w-full max-w-sm">
         <div className="mb-6 flex items-center gap-2">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-500">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-brand-400 to-brand-600 shadow-lg shadow-brand-500/30">
             <Icon path={ICONS.play} className="h-4 w-4 fill-white text-white" />
           </span>
           <span className="text-lg font-semibold tracking-tight text-white">Recap</span>
@@ -185,17 +185,36 @@ export function SignIn() {
         </form>
 
         <div className="mt-5 rounded-lg border border-ink-800 bg-ink-900 p-3">
-          <p className="text-[12px] font-medium text-ink-200">Demo credentials</p>
+          <p className="text-[12px] font-medium text-ink-200">
+            {HOSTED ? 'Just looking?' : 'Demo credentials'}
+          </p>
           <p className="mt-1 text-[12px] leading-relaxed text-ink-400">
-            Any email address, password{' '}
-            <code className="rounded bg-ink-850 px-1 py-0.5 font-mono text-ink-200">
-              recap-demo-2026
-            </code>
-            .
+            {HOSTED ? (
+              <>
+                Sign in as{' '}
+                <code className="rounded bg-ink-850 px-1 py-0.5 font-mono text-ink-200">
+                  demo@recap.app
+                </code>{' '}
+                /{' '}
+                <code className="rounded bg-ink-850 px-1 py-0.5 font-mono text-ink-200">
+                  recap-demo-2026
+                </code>
+                , or create your own account above — that one is a normal account with
+                its own password, not a key that opens every address.
+              </>
+            ) : (
+              <>
+                Any email address, password{' '}
+                <code className="rounded bg-ink-850 px-1 py-0.5 font-mono text-ink-200">
+                  recap-demo-2026
+                </code>
+                .
+              </>
+            )}
           </p>
           <p className="mt-2 text-[11px] leading-relaxed text-ink-400">
             {HOSTED
-              ? 'Or create your own account for a workspace whose completed actions, clips and work style are yours alone. Passwords are hashed with scrypt and stored one-way — nobody, including us, can read yours back.'
+              ? 'Every account has its own password, hashed with scrypt and stored one-way — nobody, including us, can read yours back. Your completed actions, clips and work style are yours alone.'
               : 'No backend is configured for this build, so this gate is a demo, not a security boundary. Shared clip links stay public by design and never require it.'}
           </p>
         </div>

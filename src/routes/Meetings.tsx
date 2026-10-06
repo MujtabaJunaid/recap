@@ -94,8 +94,8 @@ export function Meetings() {
 
           const card = (
             <article
-              className={`rise rounded-xl border border-ink-800 bg-ink-900 p-4 transition-colors ${
-                processing ? 'opacity-70' : 'hover:border-ink-600 hover:bg-ink-850'
+              className={`rise surface rounded-xl border border-ink-800 bg-ink-900 p-4 ${
+                processing ? 'opacity-70' : 'surface-hover hover:border-ink-600 hover:bg-ink-850'
               }`}
             >
               <div className="flex items-start justify-between gap-4">

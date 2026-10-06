@@ -148,7 +148,7 @@ function MeetingView({ meeting }: { meeting: NonNullable<ReturnType<typeof getMe
             onClip={can('workspace:write') ? clipHere : undefined}
           />
 
-          <div className="flex h-[32rem] flex-col overflow-hidden rounded-xl border border-ink-800 bg-ink-900">
+          <div className="flex h-[32rem] flex-col overflow-hidden surface rounded-xl border border-ink-800 bg-ink-900">
             <div className="flex items-center justify-between border-b border-ink-800 px-3 py-2">
               <h2 className="text-[13px] font-semibold text-ink-200">Transcript</h2>
               <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-ink-400">
@@ -170,7 +170,7 @@ function MeetingView({ meeting }: { meeting: NonNullable<ReturnType<typeof getMe
           </div>
         </div>
 
-        <div className="min-w-0 rounded-xl border border-ink-800 bg-ink-900">
+        <div className="min-w-0 surface rounded-xl border border-ink-800 bg-ink-900">
           <div className="flex gap-0.5 border-b border-ink-800 p-1.5">
             {TABS.map((t) => {
               const count =
