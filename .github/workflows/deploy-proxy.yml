@@ -41,7 +41,7 @@ jobs:
           - 5432:5432
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -64,7 +64,7 @@ jobs:
       name: heroku-proxy
       url: https://recap-action-plan-proxy-a93bd7dd6d10.herokuapp.com
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Package the server directory
         run: tar -czf server.tgz -C server .
