@@ -69,7 +69,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-full">
       <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-ink-800 bg-ink-900 px-3 py-4 lg:flex">
         <Link to="/" className="mb-6 flex items-center gap-2 px-2">
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-500">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-brand-400 to-brand-600 shadow-lg shadow-brand-500/25">
             <Icon path={ICONS.play} className="h-3.5 w-3.5 fill-white text-white" />
           </span>
           <span className="text-[15px] font-semibold tracking-tight text-white">Recap</span>

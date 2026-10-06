@@ -36,7 +36,6 @@ function start(port, limits) {
       ...process.env,
       PORT: String(port),
       AUTH_SECRET: SECRET,
-      PASSWORD_HASH: hash,
       ALLOWED_ORIGINS: ORIGIN,
       GROQ_API_KEY: '',
       // Nothing sits in front of the test server, so x-forwarded-for is untrusted.
@@ -124,6 +123,7 @@ try {
     assert(r.status === 401, `got ${r.status}`)
   })
 
+
   await check('bad email shape is 400', async () => {
     const r = await post('/api/auth/login', { email: 'notanemail', password: PASSWORD })
     assert(r.status === 400, `got ${r.status}`)
@@ -136,17 +136,23 @@ try {
     assert((await a.text()) === (await b.text()), 'response bodies differ')
   })
 
+  // Every credential now belongs to an account, so the auth checks need one.
+  const BASE_EMAIL = `base.${Date.now()}@example.com`
   let token = ''
-  await check('correct password issues a token', async () => {
-    const r = await post('/api/auth/login', { email: 'a@b.co', password: PASSWORD })
-    assert(r.status === 200, `got ${r.status}`)
+
+  await check('an account can be created and signs in', async () => {
+    const created = await post('/api/auth/signup', { email: BASE_EMAIL, password: PASSWORD })
+    assert(created.status === 201, `signup got ${created.status}`)
+
+    const r = await post('/api/auth/login', { email: BASE_EMAIL, password: PASSWORD })
+    assert(r.status === 200, `login got ${r.status}`)
     const body = await r.json()
     assert(typeof body.token === 'string' && body.token.includes('.'), 'no token')
     token = body.token
   })
 
   await check('the login response never echoes the password', async () => {
-    const r = await post('/api/auth/login', { email: 'a@b.co', password: PASSWORD })
+    const r = await post('/api/auth/login', { email: BASE_EMAIL, password: PASSWORD })
     const text = await r.text()
     assert(!text.includes(PASSWORD), 'password echoed back')
   })
@@ -393,12 +399,54 @@ try {
     })
   }
 
-  await check('no password or secret appears in the server log', async () => {
+  await check('there is no master password that opens any address', async () => {
+    // Regression guard: a shared credential used to authenticate any email at all.
+    // Runs on its own instance because deliberate failures would otherwise consume
+    // the lockout budget the later checks depend on.
+    const port = PORT + 3
+    const inst = start(port, { RATE_LIMIT_PER_SEC: '1000', RATE_LIMIT_BURST: '1000' })
+    try {
+      await waitForBoot(`http://127.0.0.1:${port}`)
+      for (const candidate of ['recap-demo-2026', PASSWORD, 'password', 'demo', '']) {
+        const r = await fetch(`http://127.0.0.1:${port}/api/auth/login`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', origin: ORIGIN },
+          body: JSON.stringify({
+            email: `nobody.${Date.now()}.${Math.random()}@nowhere.test`,
+            password: candidate,
+          }),
+        })
+        assert(r.status === 401, `"${candidate}" authenticated an unknown address (${r.status})`)
+      }
+    } finally {
+      inst.child.kill('SIGTERM')
+    }
+  })
+
+  await check('no password, secret, email or content appears in the server log', async () => {
     const log = serverLogOf()
     assert(!log.includes(PASSWORD), 'password in log')
     assert(!log.includes(hash), 'password hash in log')
     assert(!log.includes(SECRET), 'auth secret in log')
     assert(!log.includes('a@b.co'), 'raw email in log')
+    assert(!log.includes(BASE_EMAIL), 'account email in log')
+    assert(!/@example\.com|@nowhere\.test/.test(log), 'an email address reached the log')
+    assert(!log.includes(process.env.DATABASE_URL ?? ' '), 'connection string in log')
+  })
+
+  await check('a transcript never reaches a log line, even via an error message', async () => {
+    const canary = 'ZEBRAQUARTZ-transcript-canary-9471'
+    await post(
+      '/api/action-plan',
+      {
+        actionText: `Do the thing ${canary}`,
+        meetingTitle: `Meeting ${canary}`,
+        transcriptExcerpt: `someone: ${canary}`,
+        style: 'momentum',
+      },
+      { authorization: `Bearer ${token}` },
+    )
+    assert(!serverLogOf().includes(canary), 'transcript content reached the log')
   })
 } finally {
   // Let in-flight responses finish before the process goes away; killing mid-write

@@ -13,8 +13,6 @@
  *   GROQ_API_KEY     required. Set with `heroku config:set`, never committed.
  *   AUTH_SECRET      required. HMAC key for session tokens. Rotating it logs everyone out.
  *   DATABASE_URL     required. Postgres. Holds users and per-user workspace state.
- *   PASSWORD_HASH    optional legacy shared demo password, as `salt:derivedKey`.
- *                    Accounts in the database supersede it; see the login handler.
  *   ALLOWED_ORIGINS  comma-separated. Defaults to the GitHub Pages origin.
  *   RATE_LIMIT_PER_SEC / RATE_LIMIT_BURST  optional per-IP token bucket tuning.
  *   MODEL            optional override.
@@ -45,7 +43,6 @@ const ALLOWED_ORIGINS = (
 const TRUSTED_PROXY_HOPS = Number(process.env.TRUSTED_PROXY_HOPS || 1)
 
 const AUTH_SECRET = process.env.AUTH_SECRET
-const PASSWORD_HASH = process.env.PASSWORD_HASH
 const TOKEN_TTL_SEC = 12 * 60 * 60
 
 // scrypt parameters. N=16384 is the Node default and costs roughly 50-100ms per
@@ -98,30 +95,6 @@ function verifyToken(token) {
   }
 }
 
-/**
- * Verifies against a stored scrypt derivation. The plaintext password exists only for
- * the moment it is in this function's argument: it is never stored, never logged, never
- * returned, and is not recoverable from PASSWORD_HASH.
- *
- * Wrong passwords cost the same work as right ones, so response time does not leak
- * whether a guess was close.
- */
-function passwordMatches(supplied) {
-  if (typeof supplied !== 'string' || !PASSWORD_HASH) return false
-
-  const [saltHex, expectedHex] = PASSWORD_HASH.split(':')
-  if (!saltHex || !expectedHex) return false
-
-  try {
-    const salt = Buffer.from(saltHex, 'hex')
-    const expected = Buffer.from(expectedHex, 'hex')
-    const derived = scryptSync(supplied, salt, SCRYPT_KEYLEN, { N: SCRYPT_N })
-    return derived.length === expected.length && timingSafeEqual(derived, expected)
-  } catch {
-    return false
-  }
-}
-
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
 const MIN_PASSWORD_LENGTH = 10
 
@@ -163,6 +136,19 @@ function subjectDigest(email) {
 // ---------------------------------------------------------------------------
 // Logging. JSON lines with a correlation id. Transcript content never goes in.
 // ---------------------------------------------------------------------------
+
+/**
+ * Error messages are not safe to log verbatim. A JSON parse failure on model output
+ * quotes the fragment it choked on, and that fragment is derived from a transcript; a
+ * driver error can quote the values it rejected. Only messages matching a known-safe
+ * shape are kept.
+ */
+const SAFE_ERROR_MESSAGE = /^(upstream \d{3}|[a-z ]{0,40}timed out after \d+ms|model returned no tool call|proxy \d{3})$/i
+
+function safeErrorMessage(error) {
+  const message = typeof error?.message === 'string' ? error.message : ''
+  return SAFE_ERROR_MESSAGE.test(message) ? message : '(withheld)'
+}
 
 function log(level, event, fields = {}) {
   process.stdout.write(
@@ -564,7 +550,7 @@ const server = createServer(async (req, res) => {
         ok: true,
         model: MODEL,
         keyConfigured: Boolean(API_KEY),
-        authConfigured: Boolean(AUTH_SECRET && PASSWORD_HASH),
+        authConfigured: Boolean(AUTH_SECRET),
       },
       cors,
     )
@@ -646,7 +632,14 @@ const server = createServer(async (req, res) => {
       send(res, 201, { token, expiresAt: tokenExpiry(), user: publicUser(user) }, cors)
     } catch (error) {
       const tooLarge = error.name === 'PayloadTooLargeError'
-      if (!tooLarge) log('error', 'auth.signup_failed', { correlationId, errorName: error.name })
+      if (!tooLarge) {
+        log('error', 'auth.signup_failed', {
+          correlationId,
+          errorName: error?.name,
+          // Code, not message: a driver error message can echo the values it choked on.
+          errorCode: error?.code,
+        })
+      }
       send(res, tooLarge ? 413 : 400, { error: tooLarge ? 'payload too large' : 'invalid request' }, cors)
     }
     return
@@ -714,12 +707,13 @@ const server = createServer(async (req, res) => {
       }
       const password = typeof body?.password === 'string' ? body.password : ''
 
-      // A real account wins. The shared demo credential remains only so the public
-      // demo link keeps working without anyone having to register first.
+      // Accounts only. There is deliberately no master password: a credential that
+      // opens every address is one leak away from opening every account, and it makes
+      // "who did this" unanswerable. The seeded demo account is an ordinary row with
+      // its own password, like everyone else's.
       const account = await authenticate(email, password)
-      const demo = !account && PASSWORD_HASH && passwordMatches(password)
 
-      if (!account && !demo) {
+      if (!account) {
         // Same message and shape for an unknown email as for a wrong password, so the
         // endpoint cannot be used to discover which addresses exist.
         recordLoginFailure(ip)
@@ -730,16 +724,11 @@ const server = createServer(async (req, res) => {
 
       clearLoginFailures(ip)
 
-      const user = account ?? { id: 0, email, displayName: email.split('@')[0] }
-      log('info', 'auth.granted', {
-        correlationId,
-        subject: subjectDigest(email),
-        kind: account ? 'account' : 'shared-demo',
-      })
+      log('info', 'auth.granted', { correlationId, subject: subjectDigest(email) })
       send(
         res,
         200,
-        { token: issueToken(user), expiresAt: tokenExpiry(), user: publicUser(user) },
+        { token: issueToken(account), expiresAt: tokenExpiry(), user: publicUser(account) },
         cors,
       )
     } catch (error) {
@@ -799,8 +788,10 @@ const server = createServer(async (req, res) => {
     log('error', 'plan.failed', {
       correlationId,
       durationMs: Date.now() - started,
-      errorName: error.name,
-      errorMessage: error.message,
+      errorName: error?.name,
+      // Withheld unless the message is one of ours. A SyntaxError from parsing model
+      // output quotes transcript-derived text.
+      errorMessage: safeErrorMessage(error),
     })
     // The client falls back to its deterministic planner, so a failure here degrades
     // the feature rather than removing it.
@@ -814,12 +805,14 @@ try {
 } catch (error) {
   // Connection failures often arrive as an AggregateError whose own `message` is empty,
   // so reporting only that hides the cause entirely. Pull the detail out.
+  // Schema SQL carries no user data, so the message is safe here and is the only way
+  // to tell a connection refusal from a permission problem.
   log('error', 'db.migrate_failed', {
     errorName: error?.name,
     errorCode: error?.code,
     errorMessage: error?.message || '(empty)',
     causes: Array.isArray(error?.errors)
-      ? error.errors.map((e) => `${e.code ?? e.name}: ${e.message}`).slice(0, 4)
+      ? error.errors.map((e) => e.code ?? e.name).slice(0, 4)
       : undefined,
   })
   process.exit(1)
@@ -830,7 +823,7 @@ server.listen(PORT, () => {
     port: PORT,
     model: MODEL,
     keyConfigured: Boolean(API_KEY),
-    authConfigured: Boolean(AUTH_SECRET && PASSWORD_HASH),
+    authConfigured: Boolean(AUTH_SECRET),
     allowedOrigins: ALLOWED_ORIGINS,
   })
 })
