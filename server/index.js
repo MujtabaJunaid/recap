@@ -137,6 +137,19 @@ function subjectDigest(email) {
 // Logging. JSON lines with a correlation id. Transcript content never goes in.
 // ---------------------------------------------------------------------------
 
+/**
+ * Error messages are not safe to log verbatim. A JSON parse failure on model output
+ * quotes the fragment it choked on, and that fragment is derived from a transcript; a
+ * driver error can quote the values it rejected. Only messages matching a known-safe
+ * shape are kept.
+ */
+const SAFE_ERROR_MESSAGE = /^(upstream \d{3}|[a-z ]{0,40}timed out after \d+ms|model returned no tool call|proxy \d{3})$/i
+
+function safeErrorMessage(error) {
+  const message = typeof error?.message === 'string' ? error.message : ''
+  return SAFE_ERROR_MESSAGE.test(message) ? message : '(withheld)'
+}
+
 function log(level, event, fields = {}) {
   process.stdout.write(
     `${JSON.stringify({ ts: new Date().toISOString(), level, event, ...fields })}\n`,
@@ -775,8 +788,10 @@ const server = createServer(async (req, res) => {
     log('error', 'plan.failed', {
       correlationId,
       durationMs: Date.now() - started,
-      errorName: error.name,
-      errorMessage: error.message,
+      errorName: error?.name,
+      // Withheld unless the message is one of ours. A SyntaxError from parsing model
+      // output quotes transcript-derived text.
+      errorMessage: safeErrorMessage(error),
     })
     // The client falls back to its deterministic planner, so a failure here degrades
     // the feature rather than removing it.
@@ -790,12 +805,14 @@ try {
 } catch (error) {
   // Connection failures often arrive as an AggregateError whose own `message` is empty,
   // so reporting only that hides the cause entirely. Pull the detail out.
+  // Schema SQL carries no user data, so the message is safe here and is the only way
+  // to tell a connection refusal from a permission problem.
   log('error', 'db.migrate_failed', {
     errorName: error?.name,
     errorCode: error?.code,
     errorMessage: error?.message || '(empty)',
     causes: Array.isArray(error?.errors)
-      ? error.errors.map((e) => `${e.code ?? e.name}: ${e.message}`).slice(0, 4)
+      ? error.errors.map((e) => e.code ?? e.name).slice(0, 4)
       : undefined,
   })
   process.exit(1)

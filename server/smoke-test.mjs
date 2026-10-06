@@ -423,12 +423,30 @@ try {
     }
   })
 
-  await check('no password or secret appears in the server log', async () => {
+  await check('no password, secret, email or content appears in the server log', async () => {
     const log = serverLogOf()
     assert(!log.includes(PASSWORD), 'password in log')
     assert(!log.includes(hash), 'password hash in log')
     assert(!log.includes(SECRET), 'auth secret in log')
     assert(!log.includes('a@b.co'), 'raw email in log')
+    assert(!log.includes(BASE_EMAIL), 'account email in log')
+    assert(!/@example\.com|@nowhere\.test/.test(log), 'an email address reached the log')
+    assert(!log.includes(process.env.DATABASE_URL ?? ' '), 'connection string in log')
+  })
+
+  await check('a transcript never reaches a log line, even via an error message', async () => {
+    const canary = 'ZEBRAQUARTZ-transcript-canary-9471'
+    await post(
+      '/api/action-plan',
+      {
+        actionText: `Do the thing ${canary}`,
+        meetingTitle: `Meeting ${canary}`,
+        transcriptExcerpt: `someone: ${canary}`,
+        style: 'momentum',
+      },
+      { authorization: `Bearer ${token}` },
+    )
+    assert(!serverLogOf().includes(canary), 'transcript content reached the log')
   })
 } finally {
   // Let in-flight responses finish before the process goes away; killing mid-write
