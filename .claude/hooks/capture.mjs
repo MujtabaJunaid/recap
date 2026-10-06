@@ -20,10 +20,19 @@
  *   node .claude/hooks/capture.mjs response
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const mode = process.argv[2]
-const LOG_DIR = join(process.cwd(), '.agent-logs')
+
+/**
+ * Resolved from this file's own location, not from the working directory.
+ *
+ * The hook is registered at the Claude Code session root, which is not this repo, so
+ * `process.cwd()` pointed somewhere else entirely and the log would have been written
+ * outside the project. That is how the first install silently captured nothing.
+ */
+const LOG_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '.agent-logs')
 
 function readStdin() {
   try {

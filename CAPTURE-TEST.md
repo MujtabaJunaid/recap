@@ -1,48 +1,52 @@
 # Capture test
 
-## Tool and model
+## 1. Tool and model
 
 - **Tool:** Claude Code (CLI)
-- **Model:** `claude-opus-5` (1M context). One model both plans and executes — there is
-  no separate planner.
-- **Automatic capture mechanism:** yes. Claude Code supports hooks in
-  `.claude/settings.json` that run a command on lifecycle events. The two relevant ones
-  are `UserPromptSubmit` (fires on every prompt, receives the prompt text on stdin) and
-  `Stop` (fires at the end of every turn, receives `transcript_path` on stdin).
+- **Model:** `claude-opus-5` (1M context). One model plans and executes; there is no
+  separate planner.
+- **Automatic mechanism:** yes. Claude Code runs hooks declared in `.claude/settings.json`
+  on lifecycle events. The two that matter here are `UserPromptSubmit` (fires on every
+  prompt, receives the prompt text on stdin) and `Stop` (fires at the end of every turn,
+  receives `transcript_path` on stdin).
 
-## Mechanism and config
+## 2. Mechanism and config
 
-- **Config changed:** `.claude/settings.json`
-- **Script:** `.claude/hooks/capture.mjs`
+- **Config changed:** `C:\Users\hp\.claude\settings.json` — the **session root**, not the
+  repo. Why that matters is the first failure below.
+- **Script:** `.claude/hooks/capture.mjs` in this repo.
 
 ```json
 {
   "hooks": {
     "UserPromptSubmit": [
-      { "hooks": [{ "type": "command", "command": "node .claude/hooks/capture.mjs prompt" }] }
+      { "hooks": [{ "type": "command", "command": "node \"C:/Users/hp/projects/recap/.claude/hooks/capture.mjs\" prompt" }] }
     ],
     "Stop": [
-      { "hooks": [{ "type": "command", "command": "node .claude/hooks/capture.mjs response" }] }
+      { "hooks": [{ "type": "command", "command": "node \"C:/Users/hp/projects/recap/.claude/hooks/capture.mjs\" response" }] }
     ]
   }
 }
 ```
 
-Both events deliver JSON on stdin. `UserPromptSubmit` carries the prompt verbatim.
-`Stop` carries only `transcript_path`, so the script reads the session's JSONL
-transcript backwards and takes the **last assistant message containing text** — which is
-the final response. Thinking blocks and `tool_use` blocks are filtered out, so the log
-contains the prompt and the final answer and nothing in between.
+The existing keys in that file (`theme`, `effortLevel`, and so on) were merged, not
+replaced.
 
-One file per session, `YYYY-MM-DD_HH-MM-SS_<session-id>.md`, written to `.agent-logs/`.
-A capture failure is written to `.agent-logs/capture-errors.log` and never blocks the
-session.
+`UserPromptSubmit` carries the prompt verbatim. `Stop` carries only `transcript_path`, so
+the script reads the session's JSONL transcript backwards and takes the **last assistant
+message containing text** — the final response. `thinking` and `tool_use` blocks are
+filtered out, so the log holds the prompt and the final answer and nothing in between.
 
-## Where the canaries landed
+One file per session, `YYYY-MM-DD_HH-MM-SS_<session-id>.md`, in `.agent-logs/`. A capture
+failure is written to `.agent-logs/capture-errors.log` and never blocks the session.
 
-`.agent-logs/2026-10-06_20-02-00_canary-t.md`
+## 3. Where the canaries landed
 
-## Canary entries, raw
+- `.agent-logs/2026-10-06_20-02-00_canary-t.md` — first canary
+- `.agent-logs/2026-10-06_22-32-01_28eb925b.md` — the live session, captured by the hook
+  firing on its own
+
+## 4. Canary entries, raw
 
 ```
 ---
@@ -75,40 +79,62 @@ model: claude-opus-5
 Capture hook is live. This response was appended to .agent-logs by the Stop hook automatically, not by hand.
 ```
 
-Verified alongside the canary that the filtering works: the test transcript contained a
-`thinking` block and a `tool_use` block, and neither appears in the log.
+Filtering was verified alongside it: the test transcript contained a `thinking` block and
+a `tool_use` block, and neither reached the log.
 
 ```
 thinking leaked? 0 (want 0)
 tool calls leaked? 0 (want 0)
 ```
 
-## What did not work first
+## 5. What did not work — two real failures, both silent
 
-**The `Stop` hook silently wrote nothing.** The first canary run captured the prompt but
-produced no response entry, with nothing in the error log.
+### The hook was installed where the session never looks
 
-Cause: the test harness wrote the fake transcript to `/tmp/transcript.jsonl` from Git
-Bash, which maps `/tmp` to `C:\Users\hp\AppData\Local\Temp`. Node on Windows resolves the
-same string to `C:\tmp\transcript.jsonl`, which does not exist, so
-`finalAssistantMessage` returned `null` and the script exited cleanly. Re-running with a
-Windows-resolvable absolute path captured the response correctly.
+The first install put `.claude/settings.json` in the **repo** — `projects/recap/`. This
+Claude Code session's project root is `C:\Users\hp`, and settings load from there, not
+from whatever subdirectory happens to be in use. So the hook was never registered and
+captured **nothing** for several hours of work.
 
-Worth recording because the failure was in the test fixture, not the hook — and because
-the hook's "exit quietly when there is no transcript" behaviour, which is correct in
-production, is what made it hard to see.
+The canary "passed" during that period only because the script was invoked by hand, which
+proves the script works and proves nothing at all about the hook being installed. That is
+exactly the failure mode the assignment warns about, and it was self-inflicted by testing
+the wrong thing.
 
-## Honest limitation
+Fixed by merging the hooks into the session-root settings with an absolute path to the
+script.
 
-**The hook was installed partway through the build, not before it.**
+### The script wrote outside the repo
 
-The work on this repository began before this capture requirement was in play. The
-earlier `.agent-logs/00-brief.md` through `05-hardening-pass.md` files are a **hand-written
-decision record** — the brief, the stack choice, the scope reasoning, the review passes,
-the bugs found and the ones I got wrong — committed incrementally alongside the code they
-describe. They are genuinely contemporaneous and they are not raw transcripts, and those
-are different things.
+`LOG_DIR` was `join(process.cwd(), '.agent-logs')`. Once the hook ran for real it ran
+from the session root, so it would have written to `C:\Users\hp\.agent-logs` — outside
+the project, never committed, invisible.
 
-From the hook's installation onward, capture is automatic and unedited. The gap is real
-and is stated here rather than disguised by backfilling entries, which would be worse
-than the gap.
+Fixed by resolving the path from the script's own location:
+
+```js
+const LOG_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '.agent-logs')
+```
+
+Verified by running the hook from `C:\Users\hp` and confirming the entry landed in the
+repo and that no `.agent-logs` directory appeared at the session root.
+
+### An earlier `Stop` failure that masked itself
+
+Before either of the above, the `Stop` branch referenced a stale variable (`serverLog`)
+left behind by a refactor, in the one path that only runs when the transcript cannot be
+read. The first real failure therefore printed a `ReferenceError` instead of its cause.
+
+## The honest limitation
+
+**Capture was not running for the first several hours of this build.**
+
+The work started before the capture requirement was introduced, and the hook was then
+installed incorrectly as described above. The files `00-brief.md` through
+`05-hardening-pass.md` in `.agent-logs/` are a **hand-written decision record** — the
+brief, the stack choice, the scope reasoning, the review passes, the bugs found and the
+ones I got wrong — committed incrementally alongside the code they describe. They are
+genuinely contemporaneous. They are not raw transcripts, and those are different things.
+
+From the fix onward, capture is automatic and unedited. Nothing has been backfilled, and
+no entry has been tidied, because a reconstructed log would be worse than an honest gap.
