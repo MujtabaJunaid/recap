@@ -24,7 +24,8 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npx tsc --noEmit -p tsconfig.app.json
+      - run: npm run lint
+      # Typechecks both the app and the config project, then builds.
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:
