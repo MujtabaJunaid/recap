@@ -18,6 +18,17 @@ mkdirSync(outDir, { recursive: true })
 const DEMO_EMAIL = 'demo@recap.app'
 const DEMO_PASSWORD = 'recap-demo-2026'
 
+/**
+ * Each run gets its own account. Reusing one meant state accumulated between runs —
+ * a previous run completing every action left the next with nothing open to click,
+ * and the failure looked like a product bug rather than a dirty fixture.
+ *
+ * It also means the signup path is exercised on every run instead of only in the
+ * server smoke test.
+ */
+const RUN_EMAIL = `e2e.${Date.now()}@example.com`
+const RUN_PASSWORD = 'e2e-run-password-2026'
+
 const problems = []
 const results = []
 let step = 0
@@ -122,20 +133,36 @@ await check('the password is never written to storage', async () => {
   const leaked = await page.evaluate(() => {
     for (let i = 0; i < localStorage.length; i++) {
       const v = localStorage.getItem(localStorage.key(i)) ?? ''
-      if (v.includes('recap-demo-2026') || v.includes('definitely-not-it')) return true
+      if (
+        v.includes('recap-demo-2026') ||
+        v.includes('definitely-not-it') ||
+        v.includes('e2e-run-password-2026')
+      ) {
+        return true
+      }
     }
     return false
   })
   assert(!leaked, 'a password string was found in localStorage')
 })
 
-await check('the demo account signs in', async () => {
-  await page.fill('#email', DEMO_EMAIL)
-  await page.fill('#password', DEMO_PASSWORD)
-  await page.getByRole('button', { name: 'Continue' }).click()
-  // A fresh account lands on the first-run state; a populated one on the list. Either
-  // means sign-in worked.
-  await page.waitForSelector('h1:has-text("Meetings"), :text("Welcome,")', { timeout: 20_000 })
+await check('a new account can be created, or the demo account signs in', async () => {
+  const createLink = page.getByRole('button', { name: 'Create one' })
+  const hosted = (await createLink.count()) > 0
+
+  if (hosted) {
+    await createLink.click()
+    await page.fill('#email', RUN_EMAIL)
+    await page.fill('#password', RUN_PASSWORD)
+    await page.getByRole('button', { name: 'Create account' }).click()
+  } else {
+    // No backend configured: the local gate accepts the documented demo password.
+    await page.fill('#email', DEMO_EMAIL)
+    await page.fill('#password', DEMO_PASSWORD)
+    await page.getByRole('button', { name: 'Continue' }).click()
+  }
+
+  await page.waitForSelector('h1:has-text("Meetings"), :text("Welcome,")', { timeout: 25_000 })
   assert(!page.url().includes('/signin'), 'still on the sign-in page')
 })
 await shot('meetings-list')
@@ -471,9 +498,17 @@ watch(mobilePage, 'mobile')
 
 await check('no horizontal overflow on any route at 390px', async () => {
   await mobilePage.goto(`${base}/signin`, { waitUntil: 'networkidle' })
-  await mobilePage.fill('#email', DEMO_EMAIL)
-  await mobilePage.fill('#password', DEMO_PASSWORD)
-  await mobilePage.getByRole('button', { name: 'Continue' }).click()
+  const mobileCreate = mobilePage.getByRole('button', { name: 'Create one' })
+  if ((await mobileCreate.count()) > 0) {
+    await mobileCreate.click()
+    await mobilePage.fill('#email', `m.${Date.now()}@example.com`)
+    await mobilePage.fill('#password', RUN_PASSWORD)
+    await mobilePage.getByRole('button', { name: 'Create account' }).click()
+  } else {
+    await mobilePage.fill('#email', DEMO_EMAIL)
+    await mobilePage.fill('#password', DEMO_PASSWORD)
+    await mobilePage.getByRole('button', { name: 'Continue' }).click()
+  }
   await mobilePage.waitForTimeout(1200)
   // The mobile context is a fresh browser, so it lands on the first-run state.
   const load = mobilePage.getByRole('button', { name: 'Load the sample workspace' })
