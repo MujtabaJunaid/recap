@@ -23,16 +23,37 @@ env:
 jobs:
   verify:
     runs-on: ubuntu-latest
+
+    # A throwaway Postgres so the account and per-user-state checks run for real rather
+    # than being skipped. Never the production database.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: recap_ci
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
+
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # The proxy has no dependencies, so a syntax check plus its own smoke test is the
-      # whole gate. A broken deploy here takes the AI path down for every user.
+      - run: npm ci --omit=dev
+        working-directory: server
       - run: node --check server/index.js
       - run: node --check server/hash-password.mjs
+      # A broken deploy here takes the AI path down for every user, so the smoke test
+      # runs against a real database and a real server process before anything ships.
       - run: node server/smoke-test.mjs
+        env:
+          DATABASE_URL: postgres://postgres:ci@localhost:5432/recap_ci
 
   deploy:
     needs: verify

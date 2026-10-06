@@ -1,15 +1,20 @@
 import {
   createContext,
-
   useContext,
   useEffect,
   useMemo,
   useReducer,
+  useRef,
   type ReactNode,
 } from 'react'
 import type { Highlight, Meeting } from '../data/types'
 import { DEFAULT_WORK_STYLE, type WorkStyleId } from '../lib/coaching'
 import { onExternalChange, readJSON, storageKey, writeJSON } from '../lib/storage'
+import { useSession } from './session'
+import { debounce } from '../lib/resilience'
+import { logger } from '../lib/observability'
+
+const API_BASE = (import.meta.env?.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '')
 
 const STATE_VERSION = 1
 const KEY = storageKey('workspace', STATE_VERSION)
@@ -98,10 +103,67 @@ const WorkspaceContext = createContext<WorkspaceApi | null>(null)
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, EMPTY, () => hydrate(readJSON(KEY, EMPTY)))
+  const { token, hasAccount } = useSession()
+
+  // Server state is authoritative for a real account, so the first write after sign-in
+  // must not race ahead of the load and overwrite it with whatever this browser had.
+  const loaded = useRef(false)
+  const synced = Boolean(API_BASE && token && hasAccount)
 
   useEffect(() => {
     writeJSON(KEY, state)
   }, [state])
+
+  useEffect(() => {
+    if (!synced) {
+      loaded.current = false
+      return
+    }
+    let cancelled = false
+    loaded.current = false
+
+    fetch(`${API_BASE}/api/state`, { headers: { authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`state ${r.status}`))))
+      .then((body: { state?: unknown }) => {
+        if (cancelled) return
+        dispatch({ type: 'state/replace', state: hydrate(body.state) })
+      })
+      .catch((error: unknown) => {
+        // A failed load must not silently become a blank workspace that then
+        // overwrites the server copy. Stay offline for this session instead.
+        logger.warn('workspace.load_failed', {
+          errorName: error instanceof Error ? error.name : 'Unknown',
+        })
+      })
+      .finally(() => {
+        if (!cancelled) loaded.current = true
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [synced, token])
+
+  const push = useMemo(
+    () =>
+      debounce((payload: WorkspaceState, bearer: string) => {
+        void fetch(`${API_BASE}/api/state`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${bearer}` },
+          body: JSON.stringify({ state: payload }),
+        }).catch(() => {
+          // Offline or rejected: the local copy still holds, and the next change retries.
+        })
+      }, 800),
+    [],
+  )
+
+  useEffect(() => {
+    if (!synced || !loaded.current || !token) return
+    push(state, token)
+  }, [state, synced, token, push])
+
+  useEffect(() => push.cancel, [push])
 
   useEffect(
     () =>

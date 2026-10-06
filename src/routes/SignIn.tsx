@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Icon, ICONS } from '../components/primitives'
-import { SignInError, useSession } from '../state/session'
+import { accountsEnabled, MIN_PASSWORD_LENGTH, SignInError, useSession } from '../state/session'
 
-const HOSTED = Boolean(import.meta.env?.VITE_API_BASE_URL)
+const HOSTED = accountsEnabled
 
 export function SignIn() {
-  const { signIn } = useSession()
+  const { signIn, signUp } = useSession()
+  const [mode, setMode] = useState<'signin' | 'signup'>('signin')
+  const [displayName, setDisplayName] = useState('')
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -31,10 +33,15 @@ export function SignIn() {
       setError('Enter your password.')
       return
     }
+    if (mode === 'signup' && password.length < MIN_PASSWORD_LENGTH) {
+      setError(`Choose a password of at least ${MIN_PASSWORD_LENGTH} characters.`)
+      return
+    }
 
     setBusy(true)
     try {
-      await signIn(value, password)
+      if (mode === 'signup') await signUp(value, password, displayName.trim())
+      else await signIn(value, password)
       // The password lives only as long as the submit that used it.
       setPassword('')
       navigate(from, { replace: true })
@@ -58,12 +65,35 @@ export function SignIn() {
           <span className="text-lg font-semibold tracking-tight text-white">Recap</span>
         </div>
 
-        <h1 className="text-xl font-semibold tracking-tight text-white">Sign in</h1>
+        <h1 className="text-xl font-semibold tracking-tight text-white">
+          {mode === 'signup' ? 'Create an account' : 'Sign in'}
+        </h1>
         <p className="mt-1 text-[13px] text-ink-400">
-          Your meetings, transcripts and action items live behind this.
+          {mode === 'signup'
+            ? 'Your own workspace state: completed actions, clips and work style, kept to your account.'
+            : 'Your meetings, transcripts and action items live behind this.'}
         </p>
 
         <form onSubmit={submit} className="mt-5 space-y-3" noValidate>
+          {mode === 'signup' && (
+            <div>
+              <label
+                htmlFor="displayName"
+                className="mb-1.5 block text-[12px] font-medium text-ink-300"
+              >
+                Your name <span className="text-ink-500">(optional)</span>
+              </label>
+              <input
+                id="displayName"
+                name="name"
+                autoComplete="name"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                className="w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2.5 text-sm text-ink-200 outline-none placeholder:text-ink-400 focus:border-brand-500/60 focus:ring-2 focus:ring-brand-500/20"
+              />
+            </div>
+          )}
+
           <div>
             <label htmlFor="email" className="mb-1.5 block text-[12px] font-medium text-ink-300">
               Work email
@@ -95,7 +125,7 @@ export function SignIn() {
                 id="password"
                 name="password"
                 type={reveal ? 'text' : 'password'}
-                autoComplete="current-password"
+                autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
                 value={password}
                 onChange={(e) => {
                   setPassword(e.target.value)
@@ -127,8 +157,31 @@ export function SignIn() {
             disabled={busy}
             className="w-full rounded-lg bg-brand-500 px-3 py-2.5 text-sm font-medium text-white transition-colors hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {busy ? 'Signing in…' : 'Continue'}
+            {busy
+              ? mode === 'signup'
+                ? 'Creating account…'
+                : 'Signing in…'
+              : mode === 'signup'
+                ? 'Create account'
+                : 'Continue'}
           </button>
+
+          {HOSTED && (
+            <p className="text-center text-[12px] text-ink-400">
+              {mode === 'signup' ? 'Already have an account?' : 'No account yet?'}{' '}
+              <button
+                type="button"
+                onClick={() => {
+                  setMode(mode === 'signup' ? 'signin' : 'signup')
+                  setError('')
+                  setPassword('')
+                }}
+                className="text-brand-400 hover:underline"
+              >
+                {mode === 'signup' ? 'Sign in' : 'Create one'}
+              </button>
+            </p>
+          )}
         </form>
 
         <div className="mt-5 rounded-lg border border-ink-800 bg-ink-900 p-3">
@@ -142,7 +195,7 @@ export function SignIn() {
           </p>
           <p className="mt-2 text-[11px] leading-relaxed text-ink-400">
             {HOSTED
-              ? 'The password is verified server-side against an scrypt derivation; no plaintext is stored anywhere, and a signed, expiring token is issued on success.'
+              ? 'Or create your own account for a workspace whose completed actions, clips and work style are yours alone. Passwords are hashed with scrypt and stored one-way — nobody, including us, can read yours back.'
               : 'No backend is configured for this build, so this gate is a demo, not a security boundary. Shared clip links stay public by design and never require it.'}
           </p>
         </div>
