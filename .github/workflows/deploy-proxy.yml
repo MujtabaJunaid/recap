@@ -6,6 +6,11 @@ on:
     paths:
       - 'server/**'
       - '.github/workflows/deploy-proxy.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'server/**'
+      - '.github/workflows/deploy-proxy.yml'
   workflow_dispatch:
 
 concurrency:
@@ -31,6 +36,8 @@ jobs:
 
   deploy:
     needs: verify
+    # The smoke test runs on every PR touching the proxy; deploying only from main.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: heroku-proxy
