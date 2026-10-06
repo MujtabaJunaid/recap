@@ -56,8 +56,12 @@ export function SignIn() {
   }
 
   return (
-    <div className="grid min-h-screen place-items-center px-4">
-      <div className="w-full max-w-sm">
+    <div className="grid min-h-screen lg:grid-cols-2">
+      {/* Left: the form. Right: what you are signing in to, so the page is not a
+          floating box on a void. The panel is hidden below lg, where it would just
+          push the form off-screen. */}
+      <div className="flex items-center justify-center px-4 py-10">
+        <div className="w-full max-w-sm">
         <div className="mb-6 flex items-center gap-2">
           <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-brand-400 to-brand-600 shadow-lg shadow-brand-500/30">
             <Icon path={ICONS.play} className="h-4 w-4 fill-white text-white" />
@@ -218,7 +222,88 @@ export function SignIn() {
               : 'No backend is configured for this build, so this gate is a demo, not a security boundary. Shared clip links stay public by design and never require it.'}
           </p>
         </div>
+        </div>
       </div>
+
+      <aside className="relative hidden overflow-hidden border-l border-ink-800 bg-ink-900 lg:block">
+        <div
+          aria-hidden
+          className="absolute inset-0 opacity-70"
+          style={{
+            background:
+              'radial-gradient(620px 420px at 78% 12%, rgb(99 102 241 / 0.22), transparent 62%), radial-gradient(520px 380px at 18% 88%, rgb(20 184 166 / 0.14), transparent 60%)',
+          }}
+        />
+
+        <div className="relative flex h-full flex-col justify-center px-12 py-12">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-brand-400">
+            After the call
+          </p>
+          <h2 className="mt-3 max-w-md text-[26px] font-semibold leading-tight tracking-tight text-white">
+            Every decision, who owns it, and the thirty seconds that prove it.
+          </h2>
+          <p className="mt-3 max-w-md text-[13px] leading-relaxed text-ink-300">
+            Recap records, transcribes and summarises your meetings, then makes the
+            result navigable instead of another hour of video nobody rewatches.
+          </p>
+
+          <ul className="mt-8 max-w-md space-y-4">
+            {HIGHLIGHTS.map((item) => (
+              <li key={item.title} className="flex gap-3">
+                <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-brand-500/25 bg-brand-500/10">
+                  <Icon path={item.icon} className="h-3.5 w-3.5 text-brand-400" />
+                </span>
+                <span>
+                  <span className="block text-[13px] font-medium text-ink-100">
+                    {item.title}
+                  </span>
+                  <span className="block text-[12px] leading-relaxed text-ink-400">
+                    {item.detail}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
+
+          <div className="mt-10 flex max-w-md items-center gap-5 border-t border-ink-800 pt-5">
+            {STATS.map((stat) => (
+              <div key={stat.label}>
+                <p className="font-mono text-[18px] tabular-nums text-white">{stat.value}</p>
+                <p className="text-[11px] text-ink-400">{stat.label}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </aside>
     </div>
   )
 }
+
+const HIGHLIGHTS = [
+  {
+    icon: ICONS.sparkle,
+    title: 'Summaries you can re-cut',
+    detail: 'Seven templates over the same transcript. A standup and a board review are not the same read.',
+  },
+  {
+    icon: ICONS.check,
+    title: 'Action items that link back',
+    detail: 'Every commitment jumps to the second it was made, so nobody relitigates what was agreed.',
+  },
+  {
+    icon: ICONS.scissors,
+    title: 'Clips anyone can open',
+    detail: 'Share thirty seconds with someone who was not there. No account, and nothing else leaks.',
+  },
+  {
+    icon: ICONS.chart,
+    title: 'Who actually talked',
+    detail: 'Talk time, turns and silence. Uninteresting on a 1:1, the whole story on an eight-person hour.',
+  },
+]
+
+const STATS = [
+  { value: '8', label: 'seeded meetings' },
+  { value: '58m', label: 'longest call' },
+  { value: '7', label: 'summary templates' },
+]
