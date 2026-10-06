@@ -575,6 +575,14 @@ await shot('join-coaching')
 
 await check('leaving the call saves it and summarises the transcript', async () => {
   if (!joinable) return
+  // Stay until people have actually committed to things. The summariser is grounded,
+  // so a transcript that stops before anyone agrees to anything correctly yields no
+  // action items — which would be the test's fault, not the product's.
+  await page
+    .waitForFunction(() => document.body.innerText.includes('Thanks everyone'), null, {
+      timeout: 60_000,
+    })
+    .catch(() => {})
   await page.getByRole('button', { name: 'Leave and save' }).click()
   await page.waitForSelector('text=Call saved and summarised', { timeout: 40_000 })
 })
@@ -596,8 +604,21 @@ await check('the saved call reaches the dashboard with a model summary', async (
     (await page.locator('text=Summarising the transcript').count()) === 0,
     'the summary never finished',
   )
-  const actions = await page.locator('text=/\d+ actions?/').count()
-  assert(actions > 0, 'the saved call produced no action items')
+  assert(
+    (await page.locator('text=The summary failed').count()) === 0,
+    'summarisation failed for the saved call',
+  )
+  // Assert on the link, not on pill copy: a Pill splits its text across nodes, so a
+  // regex over element text is matching the wrong thing rather than the wrong state.
+  const links = await page.locator('section:has-text("Your calls") a[href*="/call/"]').count()
+  assert(links > 0, 'the saved call is not listed on the dashboard')
+
+  const headline = await page
+    .locator('section:has-text("Your calls") p')
+    .filter({ hasNotText: 'Summarising' })
+    .first()
+    .textContent()
+  assert((headline ?? '').trim().length > 20, `no summary text on the card: "${headline}"`)
 })
 await shot('join-on-dashboard')
 
