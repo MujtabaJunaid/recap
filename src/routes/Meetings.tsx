@@ -12,6 +12,17 @@ import { speakerStats } from '../lib/analytics'
 
 const TEAMS = ['All', 'Product', 'Sales', 'Customer Success', 'Engineering', 'Design', 'Support', 'Leadership']
 
+/** One hue per team, matched to the tokens in index.css. */
+const TEAM_ACCENT: Record<string, string> = {
+  Product: 'var(--color-team-product)',
+  Sales: 'var(--color-team-sales)',
+  'Customer Success': 'var(--color-team-success)',
+  Engineering: 'var(--color-team-engineering)',
+  Design: 'var(--color-team-design)',
+  Support: 'var(--color-team-support)',
+  Leadership: 'var(--color-team-leadership)',
+}
+
 export function Meetings() {
   const [team, setTeam] = useState('All')
   const [noticeOpen, setNoticeOpen] = useState(true)
@@ -45,10 +56,21 @@ export function Meetings() {
     <div className="mx-auto max-w-5xl px-4 py-7 md:px-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-white">Meetings</h1>
-          <p className="mt-1 text-sm text-ink-400">
-            {totals.count} recorded · {totals.hours} hours captured · {totals.open} open action items
-          </p>
+          <h1 className="display text-[28px] font-semibold leading-tight tracking-tight">
+            Meetings
+          </h1>
+          <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1.5">
+            {[
+              { value: totals.count, label: 'recorded' },
+              { value: `${totals.hours}h`, label: 'captured' },
+              { value: totals.open, label: 'open actions' },
+            ].map((stat) => (
+              <span key={stat.label} className="flex items-baseline gap-1.5">
+                <span className="font-mono text-[17px] tabular-nums text-white">{stat.value}</span>
+                <span className="text-[12px] text-ink-400">{stat.label}</span>
+              </span>
+            ))}
+          </div>
         </div>
         <Link
           to="/actions"
@@ -97,12 +119,18 @@ export function Meetings() {
           <button
             key={t}
             onClick={() => setTeam(t)}
-            className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all ${
               team === t
-                ? 'bg-brand-500 text-white'
+                ? 'glow bg-brand-500 text-white'
                 : 'bg-ink-850 text-ink-300 hover:bg-ink-800 hover:text-ink-200'
             }`}
           >
+            {t !== 'All' && (
+              <span
+                className="h-1.5 w-1.5 rounded-full"
+                style={{ background: TEAM_ACCENT[t] ?? 'var(--color-ink-600)' }}
+              />
+            )}
             {t}
           </button>
         ))}
@@ -117,7 +145,8 @@ export function Meetings() {
 
           const card = (
             <article
-              className={`rise surface rounded-xl border border-ink-800 bg-ink-900 p-4 ${
+              style={{ ['--accent' as string]: TEAM_ACCENT[meeting.team] ?? 'var(--color-ink-700)' }}
+              className={`rise surface accent-edge rounded-xl border border-ink-800 bg-ink-900 p-4 pl-5 ${
                 processing ? 'opacity-70' : 'surface-hover hover:border-ink-600 hover:bg-ink-850'
               }`}
             >
@@ -171,7 +200,15 @@ export function Meetings() {
                         {Math.round(top.share * 100)}%
                       </Pill>
                     )}
-                    <Pill>{meeting.team}</Pill>
+                    <span
+                      className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium"
+                      style={{
+                        color: TEAM_ACCENT[meeting.team] ?? 'var(--color-ink-300)',
+                        background: 'color-mix(in srgb, currentColor 12%, transparent)',
+                      }}
+                    >
+                      {meeting.team}
+                    </span>
                   </div>
                 </>
               )}

@@ -433,8 +433,7 @@ await check('highlights feed lists shared clips', async () => {
 })
 await shot('highlights-feed')
 
-console.log('
--- Recording and live coaching --')
+console.log('\n-- Recording and live coaching --')
 
 await check('the record page loads and offers a control', async () => {
   await go('/record')
@@ -525,8 +524,7 @@ await check('live coaching returns a usable suggestion', async () => {
 })
 
 
-console.log('
--- Join a call: live transcript, live coaching, saved summary --')
+console.log('\n-- Join a call: live transcript, live coaching, saved summary --')
 
 await check('the join page explains that capture is simulated', async () => {
   await go('/join')
