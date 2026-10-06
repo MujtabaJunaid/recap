@@ -812,7 +812,16 @@ try {
   await migrate()
   log('info', 'db.ready', {})
 } catch (error) {
-  log('error', 'db.migrate_failed', { errorMessage: error.message })
+  // Connection failures often arrive as an AggregateError whose own `message` is empty,
+  // so reporting only that hides the cause entirely. Pull the detail out.
+  log('error', 'db.migrate_failed', {
+    errorName: error?.name,
+    errorCode: error?.code,
+    errorMessage: error?.message || '(empty)',
+    causes: Array.isArray(error?.errors)
+      ? error.errors.map((e) => `${e.code ?? e.name}: ${e.message}`).slice(0, 4)
+      : undefined,
+  })
   process.exit(1)
 }
 

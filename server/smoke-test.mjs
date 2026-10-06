@@ -90,7 +90,7 @@ async function waitForBoot(base = BASE) {
     }
     await new Promise((r) => setTimeout(r, 200))
   }
-  throw new Error(`server did not start\n${serverLog}`)
+  throw new Error(`server did not start\n${main.readLog()}`)
 }
 
 try {
