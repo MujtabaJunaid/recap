@@ -3,7 +3,7 @@ import type { ActionItem, Highlight, Meeting, TemplateId } from '../data/types'
 import { TEMPLATE_LABELS, TEMPLATES } from '../data'
 import { person } from '../data/people'
 import { Avatar, EmptyState, Icon, ICONS, Pill } from './primitives'
-import { dueLabel, timecode } from '../lib/format'
+import { dueLabel, isOverdue, timecode } from '../lib/format'
 import { meetingInsights, speakerStats } from '../lib/analytics'
 
 export function SummaryPanel({
@@ -196,7 +196,7 @@ function Group({
                 ) : (
                   <Pill tone="warn">Unassigned</Pill>
                 )}
-                {item.due && !done && <Pill tone={overdue(item.due) ? 'warn' : 'default'}>{dueLabel(item.due)}</Pill>}
+                {item.due && !done && <Pill tone={isOverdue(item.due) ? 'warn' : 'default'}>{dueLabel(item.due)}</Pill>}
                 <button
                   onClick={() => onSeek(item.t)}
                   className="font-mono text-[11px] tabular-nums text-ink-400 transition-colors hover:text-brand-400"
@@ -210,10 +210,6 @@ function Group({
       </div>
     </div>
   )
-}
-
-function overdue(due: string): boolean {
-  return new Date(`${due}T23:59:59`) < new Date()
 }
 
 export function Highlights({

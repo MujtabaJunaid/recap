@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { MEETINGS } from '../data'
 import { PEOPLE, person } from '../data/people'
 import { Avatar, Icon, ICONS, Pill } from '../components/primitives'
-import { dueLabel, relativeDay, timecode } from '../lib/format'
+import { dueLabel, isOverdue, relativeDay, timecode } from '../lib/format'
 import type { ActionItem, Meeting } from '../data/types'
 
 interface Row {
@@ -15,6 +15,8 @@ export function Actions() {
   const [owner, setOwner] = useState('all')
   const [showDone, setShowDone] = useState(false)
   const [done, setDone] = useState<Set<string>>(new Set())
+
+  const now = useMemo(() => new Date(), [])
 
   const rows: Row[] = useMemo(
     () =>
@@ -90,12 +92,11 @@ export function Actions() {
               <button
                 onClick={() => toggle(item.id)}
                 aria-label={complete ? 'Mark as open' : 'Mark as done'}
-                className={`mt-0.5 flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded border transition-colors ${
+                className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors ${
                   complete
                     ? 'border-emerald-500 bg-emerald-500 text-white'
                     : 'border-ink-600 hover:border-brand-500'
                 }`}
-                style={{ height: 18, width: 18 }}
               >
                 {complete && <Icon path={ICONS.check} className="h-3 w-3" />}
               </button>
@@ -118,7 +119,7 @@ export function Actions() {
                     <Pill tone="warn">Unassigned</Pill>
                   )}
                   {item.due && !complete && (
-                    <Pill tone={new Date(`${item.due}T23:59:59`) < new Date() ? 'warn' : 'default'}>
+                    <Pill tone={isOverdue(item.due, now) ? 'warn' : 'default'}>
                       {dueLabel(item.due)}
                     </Pill>
                   )}

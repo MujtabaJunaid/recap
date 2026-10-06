@@ -1,4 +1,3 @@
-import { useEffect, useMemo } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { getMeeting, getSharedClip } from '../data'
 import { person } from '../data/people'
@@ -14,21 +13,9 @@ export function SharedClipPage() {
 
   const start = highlight?.start ?? 0
   const end = highlight?.end ?? 0
-  const playback = usePlayback(end)
-  const { time, playing, toggle, seek, setPlaying } = playback
+  const { time, playing, toggle, seek } = usePlayback(end, start)
 
-  useEffect(() => {
-    seek(start)
-  }, [seek, start])
-
-  useEffect(() => {
-    if (time >= end && end > 0) setPlaying(false)
-  }, [time, end, setPlaying])
-
-  const lines = useMemo(
-    () => meeting?.transcript.filter((l) => l.t >= start && l.t <= end) ?? [],
-    [meeting, start, end],
-  )
+  const lines = meeting?.transcript.filter((l) => l.t >= start && l.t <= end) ?? []
 
   if (!clip || !meeting || !highlight) {
     return (

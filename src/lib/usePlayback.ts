@@ -5,8 +5,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
  * stubbed in this build, so playback is a wall-clock simulation over the transcript
  * timeline; every consumer of a real <video> currentTime works unchanged against it.
  */
-export function usePlayback(durationSec: number) {
-  const [time, setTime] = useState(0)
+export function usePlayback(durationSec: number, floorSec = 0) {
+  const [time, setTime] = useState(floorSec)
   const [playing, setPlaying] = useState(false)
   const [rate, setRate] = useState(1)
   const frame = useRef<number | undefined>(undefined)
@@ -37,16 +37,17 @@ export function usePlayback(durationSec: number) {
   }, [playing, rate, durationSec])
 
   const seek = useCallback(
-    (to: number) => setTime(Math.max(0, Math.min(durationSec, to))),
-    [durationSec],
+    (to: number) => setTime(Math.max(floorSec, Math.min(durationSec, to))),
+    [durationSec, floorSec],
   )
 
   const toggle = useCallback(() => {
     setPlaying((p) => {
-      if (!p && time >= durationSec) setTime(0)
+      // Replaying a finished clip restarts at the window start, not at zero.
+      if (!p && time >= durationSec) setTime(floorSec)
       return !p
     })
-  }, [time, durationSec])
+  }, [time, durationSec, floorSec])
 
   const skip = useCallback((by: number) => seek(time + by), [seek, time])
 

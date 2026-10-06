@@ -4,6 +4,7 @@ import { person } from '../data/people'
 import { Avatar, Icon, ICONS } from './primitives'
 import { timecode } from '../lib/format'
 import { segments } from '../lib/search'
+import { findActive } from '../lib/transcript'
 
 export function Transcript({
   meeting,
@@ -69,9 +70,10 @@ export function Transcript({
       )}
 
       <div className="flex-1 overflow-y-auto px-1.5 py-2">
-        {lines.map(({ line, index }) => {
-          const previous = meeting.transcript[index - 1]
-          const newSpeaker = !previous || previous.speaker !== line.speaker || speaker !== 'all'
+        {lines.map(({ line, index }, row) => {
+          // Group against the previous *visible* line, so filtering never hides a name.
+          const previous = lines[row - 1]
+          const newSpeaker = !previous || previous.line.speaker !== line.speaker
           const isActive = index === activeIndex
           return (
             <button
@@ -119,13 +121,4 @@ export function Transcript({
       </div>
     </div>
   )
-}
-
-export function findActive(meeting: Meeting, time: number): number {
-  let active = -1
-  for (let i = 0; i < meeting.transcript.length; i++) {
-    if (meeting.transcript[i].t <= time) active = i
-    else break
-  }
-  return active
 }

@@ -51,3 +51,7 @@ export function dueLabel(iso: string, now = new Date()): string {
   if (diff < 7) return `Due in ${diff}d`
   return `Due ${d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`
 }
+
+export function isOverdue(due: string, now = new Date()): boolean {
+  return new Date(`${due}T23:59:59`) < now
+}
