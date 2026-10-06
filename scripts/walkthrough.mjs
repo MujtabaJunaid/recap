@@ -79,15 +79,45 @@ await shot('signin-gate')
 
 await check('invalid email is rejected with a message', async () => {
   await page.fill('#email', 'not-an-email')
+  await page.fill('#password', 'recap-demo-2026')
   await page.getByRole('button', { name: 'Continue' }).click()
-  await page.waitForSelector('#email-error', { timeout: 3000 })
+  await page.waitForSelector('#signin-error', { timeout: 3000 })
   assert(page.url().includes('/signin'), 'should not have navigated')
 })
 
-await check('any valid email signs in', async () => {
+await check('a missing password is rejected', async () => {
   await page.fill('#email', 'someone.else@example.com')
+  await page.fill('#password', '')
   await page.getByRole('button', { name: 'Continue' }).click()
-  await page.waitForSelector('h1:has-text("Meetings")', { timeout: 10_000 })
+  await page.waitForSelector('#signin-error', { timeout: 3000 })
+  assert(page.url().includes('/signin'), 'should not have navigated')
+})
+
+await check('a wrong password is rejected and the field is cleared', async () => {
+  await page.fill('#email', 'someone.else@example.com')
+  await page.fill('#password', 'definitely-not-it')
+  await page.getByRole('button', { name: 'Continue' }).click()
+  await page.waitForSelector('#signin-error', { timeout: 10_000 })
+  assert(page.url().includes('/signin'), 'should not have navigated')
+  assert((await page.inputValue('#password')) === '', 'password field was not cleared')
+})
+
+await check('the password is never written to storage', async () => {
+  const leaked = await page.evaluate(() => {
+    for (let i = 0; i < localStorage.length; i++) {
+      const v = localStorage.getItem(localStorage.key(i)) ?? ''
+      if (v.includes('recap-demo-2026') || v.includes('definitely-not-it')) return true
+    }
+    return false
+  })
+  assert(!leaked, 'a password string was found in localStorage')
+})
+
+await check('any email with the correct password signs in', async () => {
+  await page.fill('#email', 'someone.else@example.com')
+  await page.fill('#password', 'recap-demo-2026')
+  await page.getByRole('button', { name: 'Continue' }).click()
+  await page.waitForSelector('h1:has-text("Meetings")', { timeout: 15_000 })
 })
 await shot('meetings-list')
 
@@ -370,8 +400,9 @@ watch(mobilePage, 'mobile')
 
 await check('no horizontal overflow on any route at 390px', async () => {
   await mobilePage.goto(`${base}/signin`, { waitUntil: 'networkidle' })
+  await mobilePage.fill('#password', 'recap-demo-2026')
   await mobilePage.getByRole('button', { name: 'Continue' }).click()
-  await mobilePage.waitForTimeout(500)
+  await mobilePage.waitForTimeout(800)
 
   for (const path of ['/', '/m/q3-roadmap-review', '/actions', '/highlights', '/share/ck-7f2a91']) {
     await mobilePage.goto(`${base}${path}`, { waitUntil: 'networkidle' })

@@ -3,6 +3,7 @@ import type { ActionItem, Meeting } from '../data/types'
 import { WORK_STYLES, type WorkStyleId } from '../lib/coaching'
 import { getActionPlan, isHostedPlanningEnabled, type PlanResult } from '../lib/planClient'
 import { useWorkspace } from '../state/workspace'
+import { useSession } from '../state/session'
 import { Icon, ICONS, Pill } from './primitives'
 
 /**
@@ -11,6 +12,7 @@ import { Icon, ICONS, Pill } from './primitives'
  */
 export function ActionPlanPanel({ item, meeting }: { item: ActionItem; meeting: Meeting }) {
   const { workStyle } = useWorkspace()
+  const { token } = useSession()
   const [open, setOpen] = useState(false)
   const [result, setResult] = useState<PlanResult | null>(null)
   const [loading, setLoading] = useState(false)
@@ -21,7 +23,7 @@ export function ActionPlanPanel({ item, meeting }: { item: ActionItem; meeting: 
     if (!open) return
     let cancelled = false
     setLoading(true)
-    getActionPlan(item, meeting, workStyle)
+    getActionPlan(item, meeting, workStyle, token)
       .then((r) => {
         if (!cancelled) setResult(r)
       })
@@ -31,7 +33,7 @@ export function ActionPlanPanel({ item, meeting }: { item: ActionItem; meeting: 
     return () => {
       cancelled = true
     }
-  }, [open, item, meeting, workStyle])
+  }, [open, item, meeting, workStyle, token])
 
   const plan = result?.plan
 

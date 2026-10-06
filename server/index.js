@@ -11,12 +11,15 @@
  *
  * Env:
  *   GROQ_API_KEY     required. Set with `heroku config:set`, never committed.
+ *   AUTH_SECRET      required. HMAC key for session tokens. Rotating it logs everyone out.
+ *   PASSWORD_HASH    required. scrypt verifier as `salt:derivedKey`, both hex.
+ *                    The plaintext password is never stored anywhere, here or in config.
  *   ALLOWED_ORIGINS  comma-separated. Defaults to the GitHub Pages origin.
  *   MODEL            optional override.
  *   PORT             supplied by the platform.
  */
 import { createServer } from 'node:http'
-import { randomUUID } from 'node:crypto'
+import { createHmac, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto'
 
 const PORT = process.env.PORT || 3000
 const API_KEY = process.env.GROQ_API_KEY
@@ -30,8 +33,95 @@ const ALLOWED_ORIGINS = (
   .map((o) => o.trim())
   .filter(Boolean)
 
+const AUTH_SECRET = process.env.AUTH_SECRET
+const PASSWORD_HASH = process.env.PASSWORD_HASH
+const TOKEN_TTL_SEC = 12 * 60 * 60
+
+// scrypt parameters. N=16384 is the Node default and costs roughly 50-100ms per
+// verification here, which is slow enough to make offline guessing expensive and fast
+// enough that a login does not feel sluggish.
+const SCRYPT_N = 16384
+const SCRYPT_KEYLEN = 64
+
 const MAX_BODY_BYTES = 16 * 1024
 const UPSTREAM_TIMEOUT_MS = 20_000
+
+// ---------------------------------------------------------------------------
+// Session tokens.
+//
+// HMAC-signed, expiring, stateless. Not a JWT library, because the only claims this
+// service needs are a subject and an expiry, and a dependency that parses attacker-
+// controlled tokens is a liability for that much value.
+//
+// The signature is over the payload, so a client cannot extend its own expiry. The
+// payload is base64url, not encrypted: it is readable, which is why nothing sensitive
+// goes in it beyond an email the user supplied about themselves.
+// ---------------------------------------------------------------------------
+
+const b64url = (buf) => Buffer.from(buf).toString('base64url')
+
+function sign(payload) {
+  const body = b64url(JSON.stringify(payload))
+  const mac = createHmac('sha256', AUTH_SECRET).update(body).digest('base64url')
+  return `${body}.${mac}`
+}
+
+function verifyToken(token) {
+  if (typeof token !== 'string' || !token.includes('.')) return null
+  const [body, mac] = token.split('.')
+  if (!body || !mac) return null
+
+  const expected = createHmac('sha256', AUTH_SECRET).update(body).digest('base64url')
+  const a = Buffer.from(mac)
+  const b = Buffer.from(expected)
+  // Constant-time: a length-varying or short-circuiting compare leaks the signature
+  // one byte at a time.
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return null
+
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'))
+    if (typeof payload.exp !== 'number' || payload.exp * 1000 < Date.now()) return null
+    return payload
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Verifies against a stored scrypt derivation. The plaintext password exists only for
+ * the moment it is in this function's argument: it is never stored, never logged, never
+ * returned, and is not recoverable from PASSWORD_HASH.
+ *
+ * Wrong passwords cost the same work as right ones, so response time does not leak
+ * whether a guess was close.
+ */
+function passwordMatches(supplied) {
+  if (typeof supplied !== 'string' || !PASSWORD_HASH) return false
+
+  const [saltHex, expectedHex] = PASSWORD_HASH.split(':')
+  if (!saltHex || !expectedHex) return false
+
+  try {
+    const salt = Buffer.from(saltHex, 'hex')
+    const expected = Buffer.from(expectedHex, 'hex')
+    const derived = scryptSync(supplied, salt, SCRYPT_KEYLEN, { N: SCRYPT_N })
+    return derived.length === expected.length && timingSafeEqual(derived, expected)
+  } catch {
+    return false
+  }
+}
+
+/** Used by scripts/hash-password.mjs to produce the value stored in config. */
+export function hashPassword(plaintext) {
+  const salt = randomBytes(16)
+  const derived = scryptSync(plaintext, salt, SCRYPT_KEYLEN, { N: SCRYPT_N })
+  return `${salt.toString('hex')}:${derived.toString('hex')}`
+}
+
+/** Emails are PII and must not reach a log line; a short digest is enough to correlate. */
+function subjectDigest(email) {
+  return createHmac('sha256', AUTH_SECRET).update(email.toLowerCase()).digest('hex').slice(0, 12)
+}
 
 // ---------------------------------------------------------------------------
 // Logging. JSON lines with a correlation id. Transcript content never goes in.
@@ -113,7 +203,9 @@ const SCHEMA = {
     timebox: { type: 'string' },
     if_stuck: { type: 'string' },
     needs_clarification: { type: 'boolean' },
-    clarifying_question: { type: 'string' },
+    // Union with null: a model fills every declared property, and sends null for the
+    // one it is not using. A bare string type makes the provider reject its own output.
+    clarifying_question: { type: ['string', 'null'] },
   },
   required: ['cta', 'first_step', 'steps', 'timebox', 'if_stuck', 'needs_clarification'],
   additionalProperties: false,
@@ -213,7 +305,12 @@ async function callModel(body, correlationId) {
     model: MODEL,
     messages,
     temperature: 0.4,
-    max_tokens: 700,
+    // Reasoning models spend the budget thinking before they emit the tool call. At 700
+    // the JSON was being truncated mid-string and the provider rejected its own output
+    // with "failed to parse tool call arguments". Low effort also cuts latency, which
+    // matters more than depth for a four-step plan.
+    reasoning_effort: 'low',
+    max_tokens: 2500,
     tools: [
       {
         type: 'function',
@@ -280,7 +377,7 @@ function corsHeaders(origin) {
   return {
     'access-control-allow-origin': allowed ? origin : ALLOWED_ORIGINS[0],
     'access-control-allow-methods': 'POST, OPTIONS',
-    'access-control-allow-headers': 'content-type',
+    'access-control-allow-headers': 'content-type, authorization',
     'access-control-max-age': '86400',
     vary: 'origin',
   }
@@ -297,15 +394,27 @@ function send(res, status, body, extra = {}) {
   res.end(payload)
 }
 
+class PayloadTooLargeError extends Error {
+  constructor() {
+    super('payload too large')
+    this.name = 'PayloadTooLargeError'
+  }
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let size = 0
+    let rejected = false
     const chunks = []
     req.on('data', (chunk) => {
+      if (rejected) return
       size += chunk.length
       if (size > MAX_BODY_BYTES) {
-        reject(new Error('payload too large'))
-        req.destroy()
+        rejected = true
+        // Drain rather than destroy: killing the socket makes the router report 503,
+        // which hides a client error behind what looks like an outage.
+        req.resume()
+        reject(new PayloadTooLargeError())
         return
       }
       chunks.push(chunk)
@@ -333,11 +442,24 @@ const server = createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && req.url === '/health') {
-    send(res, 200, { ok: true, model: MODEL, keyConfigured: Boolean(API_KEY) }, cors)
+    send(
+      res,
+      200,
+      {
+        ok: true,
+        model: MODEL,
+        keyConfigured: Boolean(API_KEY),
+        authConfigured: Boolean(AUTH_SECRET && PASSWORD_HASH),
+      },
+      cors,
+    )
     return
   }
 
-  if (req.method !== 'POST' || req.url !== '/api/action-plan') {
+  const isLogin = req.method === 'POST' && req.url === '/api/auth/login'
+  const isPlan = req.method === 'POST' && req.url === '/api/action-plan'
+
+  if (!isLogin && !isPlan) {
     send(res, 404, { error: 'not found' }, cors)
     return
   }
@@ -345,6 +467,12 @@ const server = createServer(async (req, res) => {
   if (origin && !ALLOWED_ORIGINS.includes(origin)) {
     log('warn', 'origin.rejected', { correlationId, origin })
     send(res, 403, { error: 'origin not allowed' }, cors)
+    return
+  }
+
+  if (!AUTH_SECRET || !PASSWORD_HASH) {
+    log('error', 'config.missing_auth', { correlationId })
+    send(res, 503, { error: 'service not configured' }, cors)
     return
   }
 
@@ -364,6 +492,44 @@ const server = createServer(async (req, res) => {
     return
   }
 
+  // ---- Login ----------------------------------------------------------------
+  if (isLogin) {
+    try {
+      const body = await readBody(req)
+      const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : ''
+
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || email.length > 200) {
+        send(res, 400, { error: 'a valid email is required' }, cors)
+        return
+      }
+      if (!passwordMatches(body?.password)) {
+        // Same message and shape for a bad email as a bad password, so the endpoint
+        // cannot be used to discover which addresses exist.
+        log('warn', 'auth.rejected', { correlationId, subject: subjectDigest(email) })
+        send(res, 401, { error: 'email or password is incorrect' }, cors)
+        return
+      }
+
+      const exp = Math.floor(Date.now() / 1000) + TOKEN_TTL_SEC
+      const token = sign({ sub: email, exp })
+      log('info', 'auth.granted', { correlationId, subject: subjectDigest(email) })
+      send(res, 200, { token, expiresAt: exp * 1000 }, cors)
+    } catch (error) {
+      const tooLarge = error.name === 'PayloadTooLargeError'
+      send(res, tooLarge ? 413 : 400, { error: error.message }, cors)
+    }
+    return
+  }
+
+  // ---- Plan generation, authenticated -----------------------------------------
+  const authHeader = req.headers.authorization || ''
+  const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
+  const session = verifyToken(bearer)
+  if (!session) {
+    send(res, 401, { error: 'sign in required' }, { ...cors, 'www-authenticate': 'Bearer' })
+    return
+  }
+
   const started = Date.now()
   try {
     const body = await readBody(req)
@@ -376,9 +542,11 @@ const server = createServer(async (req, res) => {
     const raw = await callModel(body, correlationId)
     const result = validatePlan(raw)
 
-    // style and duration only. The action text and transcript are user content.
+    // Style, timing and a digest of the subject. The action text, the transcript and
+    // the email itself are user content and never appear here.
     log('info', 'plan.generated', {
       correlationId,
+      subject: subjectDigest(session.sub),
       style: body.style,
       durationMs: Date.now() - started,
       clarified: result.plan === null,
@@ -386,6 +554,10 @@ const server = createServer(async (req, res) => {
 
     send(res, 200, result, cors)
   } catch (error) {
+    if (error.name === 'PayloadTooLargeError') {
+      send(res, 413, { error: 'payload too large' }, cors)
+      return
+    }
     log('error', 'plan.failed', {
       correlationId,
       durationMs: Date.now() - started,
@@ -403,6 +575,7 @@ server.listen(PORT, () => {
     port: PORT,
     model: MODEL,
     keyConfigured: Boolean(API_KEY),
+    authConfigured: Boolean(AUTH_SECRET && PASSWORD_HASH),
     allowedOrigins: ALLOWED_ORIGINS,
   })
 })

@@ -52,15 +52,51 @@ where the product earns its keep.
 - Workspace state. Completed action items and clips you create persist, survive a reload,
   and stay consistent across tabs.
 
-## Code layout
+## Architecture
+
+Two deployed pieces. The static site holds the product; a small Node process holds the
+API key, because a static site cannot keep a secret.
+
+```
+  signed-out visitor ──▶ GitHub Pages ──▶ /share/:clipId   (public, clip only)
+
+                         ┌─────────────────────────────┐
+                         │ SPA (React + TS + Vite)     │
+                         │  routes/ components/        │
+                         │  state/   session+workspace │──▶ localStorage, cross-tab
+                         │  lib/     pure domain logic │
+                         │  data/    repository seam   │──▶ bundled fixtures
+                         └──────────────┬──────────────┘
+                                        │ login (email + password)
+                                        │ plan  (Bearer token)
+                                        ▼
+                         ┌─────────────────────────────┐
+                         │ Heroku proxy                │
+                         │  origin allowlist           │
+                         │  per-IP rate limit          │
+                         │  scrypt password verify     │
+                         │  HMAC session tokens        │
+                         │  GROQ_API_KEY (config var)  │
+                         └──────────────┬──────────────┘
+                                        ▼
+                                   Groq tool-calling API
+
+  proxy unreachable ──▶ client falls back to its own planner, and says so
+```
+
+`ARCHITECTURE.md` has the full version with the reasoning behind each boundary.
+
+### Code layout
 
 ```
 src/
-  data/       seed meetings, people, shared clips; the type contract in types.ts
-  lib/        derived layer — analytics, search, redaction, formatting, playback clock
-  state/      session (auth model) and workspace (mutable state) providers
-  components/ Shell, Player, Transcript, Panels, ShareDialog, ErrorBoundary, primitives
+  data/       seed meetings, people, shared clips; repository seam; types.ts contract
+  lib/        pure domain logic — analytics, search, redaction, resilience,
+              observability, coaching, prompts, playback clock
+  state/      session (auth) and workspace (mutable state) providers
+  components/ Shell, Player, Transcript, Panels, ActionPlan, ShareDialog, ErrorBoundary
   routes/     Meetings, MeetingDetail, Search, Actions, HighlightsFeed, SharedClipPage, SignIn
+server/       the proxy that holds the API key
 ```
 
 **Nothing derivable is stored.** Talk time, speaker timelines, meeting insights and the

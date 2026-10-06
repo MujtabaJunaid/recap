@@ -46,8 +46,11 @@ export async function getActionPlan(
   item: ActionItem,
   meeting: Meeting,
   style: WorkStyleId,
+  token?: string | null,
 ): Promise<PlanResult> {
-  if (!API_BASE) return localResult(item, meeting, style, false)
+  // No proxy, or no session token to present to it: use the local planner rather than
+  // making a call that will be refused.
+  if (!API_BASE || !token) return localResult(item, meeting, style, false)
 
   // Same item and style must not be billed twice.
   const key = `${meeting.id}:${item.id}:${style}`
@@ -55,7 +58,7 @@ export async function getActionPlan(
   try {
     return await cache.run(key, () =>
       breaker.run(() =>
-        retry(() => requestPlan(item, meeting, style), {
+        retry(() => requestPlan(item, meeting, style, token), {
           attempts: 2,
           baseMs: 300,
           maxMs: 2_000,
@@ -85,6 +88,7 @@ async function requestPlan(
   item: ActionItem,
   meeting: Meeting,
   style: WorkStyleId,
+  token: string,
 ): Promise<PlanResult> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 25_000)
@@ -92,7 +96,7 @@ async function requestPlan(
   try {
     const response = await fetch(`${API_BASE}/api/action-plan`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
       signal: controller.signal,
       body: JSON.stringify({
         actionText: item.text,
@@ -111,6 +115,8 @@ async function requestPlan(
       throw new RateLimitError(Number(body?.retryAfterMs) || 2_000)
     }
     if (response.status === 400) throw new BadRequestError('proxy rejected the request')
+    // An expired or revoked token will not succeed on retry; fall back immediately.
+    if (response.status === 401) throw new BadRequestError('session expired')
     if (!response.ok) throw new Error(`proxy ${response.status}`)
 
     const body: unknown = await response.json()

@@ -69,8 +69,11 @@ export const ACTION_PLAN_SCHEMA = {
       description: 'True when the action item is too vague to plan without guessing.',
     },
     clarifying_question: {
-      type: 'string',
-      description: 'Required when needs_clarification is true; otherwise omit.',
+      // Union with null: a model fills every declared property and sends null for the
+      // one it is not using. A bare string type makes the provider reject its own
+      // tool call before it ever reaches us.
+      type: ['string', 'null'],
+      description: 'The question to ask when needs_clarification is true; null otherwise.',
     },
   },
   required: ['cta', 'first_step', 'steps', 'timebox', 'if_stuck', 'needs_clarification'],

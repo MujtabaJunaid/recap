@@ -4,26 +4,58 @@ What this system is, what it deliberately is not, and where the seams are.
 
 ## Shape
 
-A client-rendered SPA (React + TypeScript + Vite) deployed as static files to GitHub
-Pages. **There is no backend.** That is a deployment constraint, not an oversight: the
-session had no cloud credentials beyond a GitHub token, and GitHub Pages serves static
-files only.
+Two deployed pieces, and the split is the whole design.
 
-That constraint drives almost everything below, so it is stated once here rather than
-apologised for repeatedly. Where a property genuinely cannot be achieved without a
-server, this document says so instead of simulating it.
+A static SPA on GitHub Pages holds the product. A single small Node process on Heroku
+holds the provider API key, because a static site cannot: anything the browser can read,
+every visitor can read.
 
 ```
-┌──────────────── browser ────────────────┐
-│  routes/        screens                 │
-│  components/    presentation            │
-│  state/         session + workspace     │  ← providers, persisted, cross-tab
-│  lib/           pure domain logic       │  ← analytics, search, redaction, resilience
-│  data/          repository + fixtures   │  ← the one seam to a future backend
-└─────────────────────────────────────────┘
+                    ┌──────────────────────────────┐
+   signed-out       │  GitHub Pages (static CDN)   │
+   visitor ────────▶│  /share/:clipId              │  public by design, no account
+                    │  clip + its transcript only  │
+                    └──────────────────────────────┘
+                                  │
+                    ┌─────────────▼────────────────┐
+                    │  SPA  (React + TS + Vite)    │
+                    │                              │
+                    │  routes/      screens        │
+                    │  components/  presentation   │
+                    │  state/       session +      │ ◀── localStorage, cross-tab sync
+                    │               workspace      │
+                    │  lib/         pure domain    │ ◀── analytics, search, redaction,
+                    │  data/        repository     │     resilience, observability
+                    └─────────────┬────────────────┘
+                                  │
+            fixtures ◀────────────┤  MeetingSource (the seam)
+            (bundled)             │
+                                  │  POST /api/auth/login      email + password
+                                  │  POST /api/action-plan     Bearer token
+                                  ▼
+                    ┌──────────────────────────────┐
+                    │  Heroku: action-plan proxy   │
+                    │                              │
+                    │  origin allowlist            │
+                    │  per-IP token bucket         │
+                    │  scrypt password verify      │
+                    │  HMAC session tokens         │
+                    │  body caps, field validation │
+                    │  GROQ_API_KEY ──────────────┐│  config var, never in git,
+                    └──────────────────────────────┘  never sent to a browser
+                                  │                │
+                                  ▼                │
+                    ┌──────────────────────────────┐
+                    │  Groq  (tool-calling API)    │
+                    │  response re-validated on    │
+                    │  arrival, both ends          │
+                    └──────────────────────────────┘
+
+   Proxy down, slow, or not deployed ──▶ client falls back to its own deterministic
+                                          planner and labels the plan as such.
 ```
 
-Dependencies point inward. `lib/` imports nothing from `components/` or `routes/`, which
+Dependencies point inward. Dependencies point inward. `lib/` imports nothing from `components/` or `routes/`, which
 is what keeps it unit-testable without a DOM.
 
 ## Modularity

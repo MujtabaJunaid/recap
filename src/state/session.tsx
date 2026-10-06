@@ -13,24 +13,36 @@ import { onExternalChange, readJSON, removeKey, storageKey, writeJSON } from '..
 /**
  * SECURITY BOUNDARY — read this before extending.
  *
- * This build has no server. Everything below runs in the browser, so it is an access
- * *model*, not an access *control*: it decides what the UI offers, and a determined
- * viewer can bypass all of it with devtools. Nothing secret is protected by it, because
- * nothing secret is shipped — the seed data is public fixture content.
+ * There are two modes, and they are not equally strong.
  *
- * The shape is deliberately the one a real implementation needs, so the swap is
- * mechanical rather than a rewrite:
+ * 1. PROXY CONFIGURED (VITE_API_BASE_URL set). Email and password go to
+ *    POST /api/auth/login. The server verifies the password against an scrypt
+ *    derivation — it stores no plaintext and the password is not recoverable from what
+ *    it stores — and returns an HMAC-signed, expiring token. That token is required on
+ *    every generation request and is verified server-side. This is real authentication:
+ *    the client cannot mint or extend a token, because it does not have the signing key.
  *
- *   - `signIn` becomes a call that exchanges credentials for a short-lived token.
- *   - `Session.user` is derived from a verified token, never from client-supplied input.
- *   - `can()` moves server-side and is re-checked on every data-returning request.
- *   - Share links resolve server-side by opaque token; the clip payload is fetched by
- *     that token and scoped to the clip, so an unauthenticated viewer is never sent the
- *     surrounding meeting at all. The client-side scoping here is cosmetic by comparison.
+ * 2. NO PROXY. There is no server to verify anything against, so the gate is an access
+ *    *model*, not access *control*. It decides what the UI offers and protects nothing,
+ *    which is acceptable only because nothing secret ships: the seed data is public
+ *    fixture content.
+ *
+ * In both modes the password is held in a controlled input for the duration of the
+ * submit and never stored, never logged, and never written to localStorage. Only the
+ * token is persisted.
+ *
+ * Still server-side work, in either mode: share links should resolve by opaque token so
+ * an unauthenticated viewer is never sent the surrounding meeting at all. The
+ * client-side clip scoping is cosmetic by comparison.
  */
 
-const STATE_VERSION = 1
+const STATE_VERSION = 2
 const KEY = storageKey('session', STATE_VERSION)
+
+const API_BASE = (import.meta.env?.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '')
+
+/** Used only when there is no server to verify against. See the note above. */
+const LOCAL_DEMO_PASSWORD = 'recap-demo-2026'
 
 export type SessionStatus = 'loading' | 'authenticated' | 'anonymous'
 
@@ -38,6 +50,7 @@ export interface Session {
   status: SessionStatus
   userId: string | null
   email: string | null
+  token: string | null
 }
 
 export type Capability = 'workspace:read' | 'workspace:write' | 'clip:share'
@@ -45,24 +58,44 @@ export type Capability = 'workspace:read' | 'workspace:write' | 'clip:share'
 interface StoredSession {
   userId: string
   email: string
+  /** Present only in proxy mode. Required by the generation endpoint. */
+  token?: string
+  expiresAt?: number
+}
+
+export class SignInError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'SignInError'
+  }
 }
 
 interface SessionApi extends Session {
-  signIn: (email: string) => void
+  token: string | null
+  signIn: (email: string, password: string) => Promise<void>
   signOut: () => void
   can: (capability: Capability) => boolean
 }
 
 const SessionContext = createContext<SessionApi | null>(null)
 
-const ANONYMOUS: Session = { status: 'anonymous', userId: null, email: null }
+const ANONYMOUS: Session = { status: 'anonymous', userId: null, email: null, token: null }
 
 function hydrate(raw: unknown): Session {
   const value = raw as Partial<StoredSession> | null
   if (!value || typeof value.userId !== 'string' || typeof value.email !== 'string') {
     return ANONYMOUS
   }
-  return { status: 'authenticated', userId: value.userId, email: value.email }
+  // An expired token is the same as no session; do not present a signed-in shell that
+  // cannot actually call anything.
+  if (value.expiresAt && value.expiresAt < Date.now()) return ANONYMOUS
+
+  return {
+    status: 'authenticated',
+    userId: value.userId,
+    email: value.email,
+    token: typeof value.token === 'string' ? value.token : null,
+  }
 }
 
 export function SessionProvider({ children }: { children: ReactNode }) {
@@ -77,11 +110,41 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     [],
   )
 
-  const signIn = useCallback((email: string) => {
+  const signIn = useCallback(async (email: string, password: string) => {
     const trimmed = email.trim().toLowerCase()
+
+    if (API_BASE) {
+      const response = await fetch(`${API_BASE}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: trimmed, password }),
+      })
+      if (response.status === 401) throw new SignInError('Email or password is incorrect.')
+      if (response.status === 429) throw new SignInError('Too many attempts. Try again shortly.')
+      if (!response.ok) throw new SignInError('Could not reach the sign-in service.')
+
+      const body = (await response.json()) as { token?: string; expiresAt?: number }
+      if (!body.token) throw new SignInError('Sign-in service returned no token.')
+
+      const next: StoredSession = {
+        userId: ME,
+        email: trimmed,
+        token: body.token,
+        expiresAt: body.expiresAt,
+      }
+      writeJSON(KEY, next)
+      setSession({ status: 'authenticated', userId: ME, email: trimmed, token: body.token })
+      return
+    }
+
+    // No server to verify against. Documented at the top of this file as a model, not
+    // a control.
+    if (password !== LOCAL_DEMO_PASSWORD) {
+      throw new SignInError('Email or password is incorrect.')
+    }
     const next: StoredSession = { userId: ME, email: trimmed || person(ME).name }
     writeJSON(KEY, next)
-    setSession({ status: 'authenticated', userId: next.userId, email: next.email })
+    setSession({ status: 'authenticated', userId: next.userId, email: next.email, token: null })
   }, [])
 
   const signOut = useCallback(() => {
