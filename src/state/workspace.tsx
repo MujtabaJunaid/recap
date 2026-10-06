@@ -121,14 +121,22 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }
     let cancelled = false
     loaded.current = false
+    // Abort the request itself on unmount, not just ignore its result. Leaving it in
+    // flight means every navigation logs ERR_ABORTED and holds a connection for a
+    // response nobody will read.
+    const controller = new AbortController()
 
-    fetch(`${API_BASE}/api/state`, { headers: { authorization: `Bearer ${token}` } })
+    fetch(`${API_BASE}/api/state`, {
+      headers: { authorization: `Bearer ${token}` },
+      signal: controller.signal,
+    })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`state ${r.status}`))))
       .then((body: { state?: unknown }) => {
         if (cancelled) return
         dispatch({ type: 'state/replace', state: hydrate(body.state) })
       })
       .catch((error: unknown) => {
+        if (error instanceof Error && error.name === 'AbortError') return
         // A failed load must not silently become a blank workspace that then
         // overwrites the server copy. Stay offline for this session instead.
         logger.warn('workspace.load_failed', {
@@ -141,6 +149,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
     return () => {
       cancelled = true
+      controller.abort()
     }
   }, [synced, token])
 
@@ -164,6 +173,16 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, [state, synced, token, push])
 
   useEffect(() => push.cancel, [push])
+
+  // A save still pending when the tab closes is lost. `sendBeacon` would rescue it but
+  // cannot set an Authorization header, so the token would have to go in the URL —
+  // where it lands in server logs, referrers and history. An 800ms window of lost
+  // state is the better trade; `fetch` with `keepalive` is the fix if it matters.
+  useEffect(() => {
+    const flush = () => push.cancel()
+    window.addEventListener('pagehide', flush)
+    return () => window.removeEventListener('pagehide', flush)
+  }, [push])
 
   useEffect(
     () =>
