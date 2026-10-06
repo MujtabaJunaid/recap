@@ -664,7 +664,7 @@ await check('a grounded question gets an answer with checkable citations', async
   await page.getByPlaceholder('Ask anything about your meetings').fill(
     'What did we decide about SSO and who owns telling Northwind?',
   )
-  await page.getByRole('button', { name: 'Ask' }).click()
+  await page.getByRole('button', { name: 'Ask', exact: true }).click()
 
   await page.waitForSelector('text=From', { timeout: 60_000 })
   const citation = page.locator('a[href*="/m/"], a[href*="/call/"]').first()
@@ -681,7 +681,7 @@ await check('a question nothing covers is refused rather than guessed', async ()
   await page.getByPlaceholder('Ask anything about your meetings').fill(
     'What is our total ARR and how many employees do we have?',
   )
-  await page.getByRole('button', { name: 'Ask' }).click()
+  await page.getByRole('button', { name: 'Ask', exact: true }).click()
   await page.waitForFunction(
     () => !document.body.innerText.includes('Reading your meetings'),
     null,
