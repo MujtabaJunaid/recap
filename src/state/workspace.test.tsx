@@ -7,8 +7,14 @@ import { SessionProvider } from './session'
 import { getMeeting } from '../data'
 import { ActionItems } from '../components/Panels'
 
+// WorkspaceProvider reads the session to decide whether to sync to the server, so it
+// has to be mounted inside one. Signed out, it stays on the local path.
 function wrapper({ children }: { children: React.ReactNode }) {
-  return <WorkspaceProvider>{children}</WorkspaceProvider>
+  return (
+    <SessionProvider>
+      <WorkspaceProvider>{children}</WorkspaceProvider>
+    </SessionProvider>
+  )
 }
 
 const roadmap = getMeeting('q3-roadmap-review')!

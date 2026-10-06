@@ -12,8 +12,9 @@
  * Env:
  *   GROQ_API_KEY     required. Set with `heroku config:set`, never committed.
  *   AUTH_SECRET      required. HMAC key for session tokens. Rotating it logs everyone out.
- *   PASSWORD_HASH    required. scrypt verifier as `salt:derivedKey`, both hex.
- *                    The plaintext password is never stored anywhere, here or in config.
+ *   DATABASE_URL     required. Postgres. Holds users and per-user workspace state.
+ *   PASSWORD_HASH    optional legacy shared demo password, as `salt:derivedKey`.
+ *                    Accounts in the database supersede it; see the login handler.
  *   ALLOWED_ORIGINS  comma-separated. Defaults to the GitHub Pages origin.
  *   RATE_LIMIT_PER_SEC / RATE_LIMIT_BURST  optional per-IP token bucket tuning.
  *   MODEL            optional override.
@@ -21,6 +22,7 @@
  */
 import { createServer } from 'node:http'
 import { createHmac, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto'
+import { authenticate, createUser, getState, migrate, putState } from './db.js'
 
 const PORT = process.env.PORT || 3000
 const API_KEY = process.env.GROQ_API_KEY
@@ -120,6 +122,32 @@ function passwordMatches(supplied) {
   }
 }
 
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
+const MIN_PASSWORD_LENGTH = 10
+
+function tokenExpiry() {
+  return (Math.floor(Date.now() / 1000) + TOKEN_TTL_SEC) * 1000
+}
+
+function issueToken(user) {
+  return sign({
+    sub: user.email,
+    uid: String(user.id),
+    exp: Math.floor(Date.now() / 1000) + TOKEN_TTL_SEC,
+  })
+}
+
+function publicUser(user) {
+  return { email: user.email, displayName: user.displayName ?? user.display_name ?? '' }
+}
+
+/** Extracts and verifies the bearer token, returning the session or null. */
+function requireSession(req) {
+  const header = req.headers.authorization || ''
+  if (!header.startsWith('Bearer ')) return null
+  return verifyToken(header.slice(7))
+}
+
 /** Used by scripts/hash-password.mjs to produce the value stored in config. */
 export function hashPassword(plaintext) {
   const salt = randomBytes(16)
@@ -150,8 +178,12 @@ function log(level, event, fields = {}) {
 // cheap version.
 // ---------------------------------------------------------------------------
 
-const BUCKET_RATE_PER_SEC = Number(process.env.RATE_LIMIT_PER_SEC || 0.5)
-const BUCKET_BURST = Number(process.env.RATE_LIMIT_BURST || 5)
+// Normal use makes several calls in quick succession — login, load state, save state,
+// then a plan or two. 0.5/s was tuned before the state endpoints existed and shed
+// ordinary traffic. Abuse is held back by the failed-login lockout below, which is the
+// control that actually matters for guessing.
+const BUCKET_RATE_PER_SEC = Number(process.env.RATE_LIMIT_PER_SEC || 5)
+const BUCKET_BURST = Number(process.env.RATE_LIMIT_BURST || 20)
 
 /** Failed logins get their own, much tighter budget than general traffic. */
 const LOGIN_FAIL_WINDOW_MS = 15 * 60_000
@@ -463,6 +495,11 @@ const SECURITY_HEADERS = {
 }
 
 function send(res, status, body, extra = {}) {
+  if (status === 204) {
+    res.writeHead(204, { ...SECURITY_HEADERS, ...extra })
+    res.end()
+    return
+  }
   const payload = JSON.stringify(body)
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
@@ -535,9 +572,12 @@ const server = createServer(async (req, res) => {
   }
 
   const isLogin = req.method === 'POST' && req.url === '/api/auth/login'
+  const isSignup = req.method === 'POST' && req.url === '/api/auth/signup'
+  const isGetState = req.method === 'GET' && req.url === '/api/state'
+  const isPutState = req.method === 'PUT' && req.url === '/api/state'
   const isPlan = req.method === 'POST' && req.url === '/api/action-plan'
 
-  if (!isLogin && !isPlan) {
+  if (!isLogin && !isSignup && !isGetState && !isPutState && !isPlan) {
     send(res, 404, { error: 'not found' }, cors)
     return
   }
@@ -548,7 +588,7 @@ const server = createServer(async (req, res) => {
     return
   }
 
-  if (!AUTH_SECRET || !PASSWORD_HASH) {
+  if (!AUTH_SECRET) {
     log('error', 'config.missing_auth', { correlationId })
     send(res, 503, { error: 'service not configured' }, cors)
     return
@@ -561,6 +601,94 @@ const server = createServer(async (req, res) => {
       ...cors,
       'retry-after': String(Math.ceil(retryAfterMs / 1000)),
     })
+    return
+  }
+
+  // ---- Signup -----------------------------------------------------------------
+  if (isSignup) {
+    const lockout = loginLockedOut(ip)
+    if (lockout > 0) {
+      send(res, 429, { error: 'too many attempts', retryAfterMs: lockout }, {
+        ...cors,
+        'retry-after': String(Math.ceil(lockout / 1000)),
+      })
+      return
+    }
+
+    try {
+      const body = await readBody(req)
+      const email = typeof body?.email === 'string' ? body.email.trim() : ''
+      const password = typeof body?.password === 'string' ? body.password : ''
+      const displayName = typeof body?.displayName === 'string' ? body.displayName.trim() : ''
+
+      const problems = []
+      if (!EMAIL_RE.test(email) || email.length > 200) problems.push('a valid email is required')
+      if (password.length < MIN_PASSWORD_LENGTH) {
+        problems.push(`password must be at least ${MIN_PASSWORD_LENGTH} characters`)
+      }
+      if (password.length > 200) problems.push('password is too long')
+      if (displayName.length > 80) problems.push('display name is too long')
+      if (problems.length > 0) {
+        send(res, 400, { error: 'invalid request', details: problems }, cors)
+        return
+      }
+
+      const user = await createUser(email, displayName || email.split('@')[0], password)
+      if (!user) {
+        // The address is taken. Say so: signup has to be usable, and the address was
+        // supplied by whoever is already sitting at the form.
+        send(res, 409, { error: 'an account with that email already exists' }, cors)
+        return
+      }
+
+      const token = issueToken(user)
+      log('info', 'auth.signup', { correlationId, subject: subjectDigest(user.email) })
+      send(res, 201, { token, expiresAt: tokenExpiry(), user: publicUser(user) }, cors)
+    } catch (error) {
+      const tooLarge = error.name === 'PayloadTooLargeError'
+      if (!tooLarge) log('error', 'auth.signup_failed', { correlationId, errorName: error.name })
+      send(res, tooLarge ? 413 : 400, { error: tooLarge ? 'payload too large' : 'invalid request' }, cors)
+    }
+    return
+  }
+
+  // ---- Per-user workspace state --------------------------------------------------
+  if (isGetState || isPutState) {
+    const session = requireSession(req)
+    if (!session) {
+      send(res, 401, { error: 'sign in required' }, { ...cors, 'www-authenticate': 'Bearer' })
+      return
+    }
+
+    // The shared demo credential has no row in users, so there is nothing to key state
+    // against and a write would violate the foreign key. Those sessions keep their
+    // state in the browser, which the client already handles as its offline path.
+    if (!session.uid || session.uid === '0') {
+      if (isGetState) {
+        send(res, 200, { state: {}, scope: 'local' }, cors)
+      } else {
+        send(res, 409, { error: 'shared demo sessions keep state in the browser' }, cors)
+      }
+      return
+    }
+
+    try {
+      if (isGetState) {
+        send(res, 200, { state: await getState(session.uid) }, cors)
+        return
+      }
+      const body = await readBody(req)
+      if (!body || typeof body.state !== 'object' || body.state === null) {
+        send(res, 400, { error: 'state must be an object' }, cors)
+        return
+      }
+      await putState(session.uid, body.state)
+      send(res, 204, {}, cors)
+    } catch (error) {
+      const tooLarge = error.name === 'PayloadTooLargeError'
+      if (!tooLarge) log('error', 'state.failed', { correlationId, errorName: error.name })
+      send(res, tooLarge ? 413 : 500, { error: tooLarge ? 'payload too large' : 'could not save' }, cors)
+    }
     return
   }
 
@@ -584,9 +712,16 @@ const server = createServer(async (req, res) => {
         send(res, 400, { error: 'a valid email is required' }, cors)
         return
       }
-      if (!passwordMatches(body?.password)) {
-        // Same message and shape for a bad email as a bad password, so the endpoint
-        // cannot be used to discover which addresses exist.
+      const password = typeof body?.password === 'string' ? body.password : ''
+
+      // A real account wins. The shared demo credential remains only so the public
+      // demo link keeps working without anyone having to register first.
+      const account = await authenticate(email, password)
+      const demo = !account && PASSWORD_HASH && passwordMatches(password)
+
+      if (!account && !demo) {
+        // Same message and shape for an unknown email as for a wrong password, so the
+        // endpoint cannot be used to discover which addresses exist.
         recordLoginFailure(ip)
         log('warn', 'auth.rejected', { correlationId, subject: subjectDigest(email) })
         send(res, 401, { error: 'email or password is incorrect' }, cors)
@@ -595,10 +730,18 @@ const server = createServer(async (req, res) => {
 
       clearLoginFailures(ip)
 
-      const exp = Math.floor(Date.now() / 1000) + TOKEN_TTL_SEC
-      const token = sign({ sub: email, exp })
-      log('info', 'auth.granted', { correlationId, subject: subjectDigest(email) })
-      send(res, 200, { token, expiresAt: exp * 1000 }, cors)
+      const user = account ?? { id: 0, email, displayName: email.split('@')[0] }
+      log('info', 'auth.granted', {
+        correlationId,
+        subject: subjectDigest(email),
+        kind: account ? 'account' : 'shared-demo',
+      })
+      send(
+        res,
+        200,
+        { token: issueToken(user), expiresAt: tokenExpiry(), user: publicUser(user) },
+        cors,
+      )
     } catch (error) {
       const tooLarge = error.name === 'PayloadTooLargeError'
       send(res, tooLarge ? 413 : 400, { error: error.message }, cors)
@@ -664,6 +807,14 @@ const server = createServer(async (req, res) => {
     send(res, 502, { error: 'could not generate a plan', correlationId }, cors)
   }
 })
+
+try {
+  await migrate()
+  log('info', 'db.ready', {})
+} catch (error) {
+  log('error', 'db.migrate_failed', { errorMessage: error.message })
+  process.exit(1)
+}
 
 server.listen(PORT, () => {
   log('info', 'server.started', {

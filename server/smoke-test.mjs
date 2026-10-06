@@ -307,6 +307,92 @@ try {
     }
   })
 
+  // The account routes need a database. CI provides DATABASE_URL; without it these
+  // are skipped rather than reported as failures of code they do not exercise.
+  const hasDb = Boolean(process.env.DATABASE_URL)
+  if (!hasDb) {
+    console.log('  SKIP  account checks (no DATABASE_URL in this environment)')
+  } else {
+    const unique = `smoke.${Date.now()}@example.com`
+
+    await check('signup creates an account and returns a token', async () => {
+      const r = await post('/api/auth/signup', {
+        email: unique,
+        password: 'a-sufficiently-long-password',
+        displayName: 'Smoke Test',
+      })
+      assert(r.status === 201, `got ${r.status}`)
+      const body = await r.json()
+      assert(typeof body.token === 'string' && body.token.length > 0, 'no token')
+      assert(body.user?.email === unique, 'user not echoed')
+    })
+
+    await check('signup never returns the password', async () => {
+      const r = await post('/api/auth/signup', {
+        email: `dup.${Date.now()}@example.com`,
+        password: 'a-sufficiently-long-password',
+      })
+      const text = await r.text()
+      assert(!text.includes('a-sufficiently-long-password'), 'password echoed')
+    })
+
+    await check('a duplicate email is refused', async () => {
+      const r = await post('/api/auth/signup', {
+        email: unique,
+        password: 'a-sufficiently-long-password',
+      })
+      assert(r.status === 409, `got ${r.status}`)
+    })
+
+    await check('a short password is refused', async () => {
+      const r = await post('/api/auth/signup', { email: `s.${Date.now()}@example.com`, password: 'short' })
+      assert(r.status === 400, `got ${r.status}`)
+    })
+
+    let userToken = ''
+    await check('the new account can sign in', async () => {
+      const r = await post('/api/auth/login', { email: unique, password: 'a-sufficiently-long-password' })
+      assert(r.status === 200, `got ${r.status}`)
+      userToken = (await r.json()).token
+    })
+
+    await check('a wrong password on a real account is refused', async () => {
+      const r = await post('/api/auth/login', { email: unique, password: 'not-the-password' })
+      assert(r.status === 401, `got ${r.status}`)
+    })
+
+    await check('per-user state round-trips', async () => {
+      const put = await fetch(`${BASE}/api/state`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', origin: ORIGIN, authorization: `Bearer ${userToken}` },
+        body: JSON.stringify({ state: { workStyle: 'deep' } }),
+      })
+      assert(put.status === 204, `PUT got ${put.status}`)
+
+      const got = await fetch(`${BASE}/api/state`, {
+        headers: { origin: ORIGIN, authorization: `Bearer ${userToken}` },
+      })
+      assert(got.status === 200, `GET got ${got.status}`)
+      assert((await got.json()).state.workStyle === 'deep', 'state did not round-trip')
+    })
+
+    await check('one account cannot read another account state', async () => {
+      const other = `other.${Date.now()}@example.com`
+      const signup = await post('/api/auth/signup', { email: other, password: 'another-long-password' })
+      const otherToken = (await signup.json()).token
+      const got = await fetch(`${BASE}/api/state`, {
+        headers: { origin: ORIGIN, authorization: `Bearer ${otherToken}` },
+      })
+      const body = await got.json()
+      assert(Object.keys(body.state).length === 0, 'leaked another account state')
+    })
+
+    await check('state requires a token', async () => {
+      const r = await fetch(`${BASE}/api/state`, { headers: { origin: ORIGIN } })
+      assert(r.status === 401, `got ${r.status}`)
+    })
+  }
+
   await check('no password or secret appears in the server log', async () => {
     const log = serverLogOf()
     assert(!log.includes(PASSWORD), 'password in log')
