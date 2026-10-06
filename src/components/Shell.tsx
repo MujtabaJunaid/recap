@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { Avatar, Icon, ICONS } from './primitives'
-import { ME, person } from '../data/people'
+import { Icon, ICONS } from './primitives'
+import { avatarColor } from '../data/people'
+import { useSession } from '../state/session'
 import { MEETINGS } from '../data'
 import { relativeDay } from '../lib/format'
 
@@ -16,8 +17,22 @@ function useQueryParam(key: string): string {
   return new URLSearchParams(search).get(key) ?? ''
 }
 
+/** "ada.lovelace@acme.io" -> "Ada Lovelace", "AL". Good enough and better than a guess. */
+function identityFrom(email: string | null) {
+  const local = (email ?? '').split('@')[0] || 'you'
+  const words = local.split(/[._-]+/).filter(Boolean)
+  const name = words.map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(' ') || 'You'
+  const initials = (words.length > 1
+    ? words[0][0] + words[words.length - 1][0]
+    : local.slice(0, 2)
+  ).toUpperCase()
+  return { name, initials, org: (email ?? '').split('@')[1] ?? '' }
+}
+
 export function Shell({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate()
+  const { email, signOut } = useSession()
+  const me = identityFrom(email)
   const initial = useQueryParam('q')
   const [query, setQuery] = useState(initial)
   const input = useRef<HTMLInputElement>(null)
@@ -120,12 +135,24 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </div>
         )}
 
-        <div className="mt-auto flex items-center gap-2.5 rounded-lg px-2 py-2">
-          <Avatar id={ME} size="sm" />
-          <div className="min-w-0">
-            <p className="truncate text-[13px] font-medium text-ink-200">{person(ME).name}</p>
-            <p className="truncate text-[11px] text-ink-400">{person(ME).org}</p>
+        <div className="mt-auto space-y-1">
+          <div className="flex items-center gap-2.5 rounded-lg px-2 py-2">
+            <span
+              className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white ${avatarColor(email ?? 'you')}`}
+            >
+              {me.initials}
+            </span>
+            <div className="min-w-0">
+              <p className="truncate text-[13px] font-medium text-ink-200">{me.name}</p>
+              <p className="truncate text-[11px] text-ink-400">{email}</p>
+            </div>
           </div>
+          <button
+            onClick={signOut}
+            className="w-full rounded-lg px-2 py-1.5 text-left text-[12px] text-ink-400 transition-colors hover:bg-ink-850 hover:text-ink-200"
+          >
+            Sign out
+          </button>
         </div>
       </aside>
 
@@ -157,7 +184,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
               <Icon path={ICONS.calendar} className="h-3.5 w-3.5" />
               Calendar connected
             </span>
-            <Avatar id={ME} size="sm" />
+            <span
+              title={email ?? undefined}
+              className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white ${avatarColor(email ?? 'you')}`}
+            >
+              {me.initials}
+            </span>
           </div>
         </header>
         <main className="flex-1">{children}</main>
