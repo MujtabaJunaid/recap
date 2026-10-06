@@ -84,6 +84,10 @@ is a speaking-share signal, not diarisation output, and the UI says so where it 
   all degrade to in-memory state rather than a blank page.
 - **The meeting route is keyed by id**, so navigating between meetings remounts rather
   than leaking the previous meeting's playhead, template and tab.
+- **Reads are rate limited and shed load.** A token bucket at the data-access seam
+  rejects rather than queues, so backpressure surfaces as an error instead of hidden
+  latency. The limiter sits inside the retry loop so a retry storm is shed too, and
+  `Retry-After` from a server wins over the computed backoff.
 
 ## Security and privacy
 

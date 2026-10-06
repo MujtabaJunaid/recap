@@ -237,3 +237,55 @@ entry and watching it fail with a useful message.
 - `ARCHITECTURE.md` lists four places this design breaks as it scales. None are fixed;
   all are named with a concrete fix, because a static bundle of eight meetings has not
   earned an inverted index or a virtualised list yet.
+
+---
+
+## Fourth pass: rate limiting, and a claim that needed correcting
+
+### A gap worth having been asked about
+
+Timeouts, retry, backoff, breaker and idempotency were in place; **rate limiting was
+not**. It was asked for directly and it was genuinely missing.
+
+`RateLimiter` is a token bucket: sustained rate plus a burst allowance, because real
+callers idle and then fire several requests at once. Two design choices worth recording:
+
+- **It rejects rather than queues.** A queue converts backpressure into latency and
+  hides it; rejecting surfaces it as an error the caller can act on.
+- **Ordering in the read pipeline.** De-duplication is outermost, so a repeated read
+  costs no budget at all. The limiter sits *inside* the retry loop, so a retry storm is
+  shed rather than amplifying the condition it is reacting to. Getting this backwards
+  would make the limiter actively harmful during an incident.
+
+`RateLimitError` carries `retryAfterMs`, and `retry` now prefers it over its own computed
+backoff. A server that sends `Retry-After` knows more about its own recovery than a
+client-side curve does.
+
+Stated plainly in the code and the docs: client-side limiting protects the backend from
+this tab and this tab from itself. It is **not** a security control, because a hostile
+client would not run it. The authoritative limit belongs server-side.
+
+Search-as-you-type is now debounced at 120ms. Filtering scans the whole transcript, so a
+burst of keystrokes was costing one full pass per character.
+
+### A claim of mine that was wrong
+
+I had written, more than once, that the app makes "no outbound request of any kind".
+Grepping `src/` supports that. Grepping the **built bundle** does not: it contains one
+`fetch`, from Vite's `modulepreload` polyfill, which loads the app's own JS chunks from
+the same origin.
+
+It is asset loading rather than an API call, so the substance of the claim held — but the
+claim as phrased was about the artefact and I had only checked the source. Both
+`ARCHITECTURE.md` and this log now say what is actually true of the thing that ships.
+
+The general lesson is the one this project keeps relearning: check the artefact, not the
+intention. It is the same reason `check-secrets.mjs` scans `dist/` rather than `src/`.
+
+### Verification
+
+- 68 tests (35 in the resilience suite alone), covering burst exhaustion, refill rate,
+  the idle cap on banked tokens, reject-don't-queue, `Retry-After` preference over
+  computed backoff, and debounce coalescing and cancellation.
+- Walkthrough against the browser: 0 console errors, 0 page errors, 0 failed requests.
+- Build, lint, secret scan clean.

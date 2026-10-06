@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Meeting } from '../data/types'
 import { person } from '../data/people'
 import { Avatar, Icon, ICONS } from './primitives'
 import { timecode } from '../lib/format'
 import { segments } from '../lib/search'
 import { findActive } from '../lib/transcript'
+import { debounce } from '../lib/resilience'
 
 export function Transcript({
   meeting,
@@ -18,7 +19,13 @@ export function Transcript({
   autoScroll: boolean
 }) {
   const [filter, setFilter] = useState('')
+  const [appliedFilter, setAppliedFilter] = useState('')
   const [speaker, setSpeaker] = useState('all')
+
+  // Filtering scans the whole transcript, so apply it once the typing settles rather
+  // than on every keystroke.
+  const applyFilter = useMemo(() => debounce(setAppliedFilter, 120), [])
+  useEffect(() => applyFilter.cancel, [applyFilter])
   const activeRef = useRef<HTMLButtonElement>(null)
   const paneRef = useRef<HTMLDivElement>(null)
 
@@ -37,7 +44,7 @@ export function Transcript({
     })
   }, [activeIndex, autoScroll, filter])
 
-  const query = filter.trim()
+  const query = appliedFilter.trim()
   const lines = meeting.transcript
     .map((line, index) => ({ line, index }))
     .filter(({ line }) => speaker === 'all' || line.speaker === speaker)
@@ -53,7 +60,10 @@ export function Transcript({
           />
           <input
             value={filter}
-            onChange={(e) => setFilter(e.target.value)}
+            onChange={(e) => {
+              setFilter(e.target.value)
+              applyFilter(e.target.value)
+            }}
             placeholder="Find in transcript"
             className="w-full rounded-md border border-ink-700 bg-ink-950 py-1.5 pl-8 pr-2 text-[13px] text-ink-200 outline-none placeholder:text-ink-400 focus:border-brand-500/60"
           />

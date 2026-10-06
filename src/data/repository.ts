@@ -3,6 +3,8 @@ import { MEETINGS, SHARED_CLIPS, type SharedClip } from './index'
 import {
   CircuitBreaker,
   IdempotencyCache,
+  RateLimiter,
+  RateLimitError,
   retry,
   withTimeout,
   CircuitOpenError,
@@ -67,6 +69,9 @@ export class FixtureSource implements MeetingSource {
 export interface RepositoryOptions {
   timeoutMs?: number
   attempts?: number
+  /** Sustained reads per second before callers are shed. */
+  ratePerSecond?: number
+  burst?: number
   log?: Logger
 }
 
@@ -74,6 +79,8 @@ export interface RepositoryOptions {
 function isTransient(error: unknown): boolean {
   if (error instanceof NotFoundError) return false
   if (error instanceof CircuitOpenError) return false
+  // Retryable, but only after the delay the server asked for; `retry` honours it.
+  if (error instanceof RateLimitError) return true
   if (error instanceof TimeoutError) return true
   if (error instanceof Error && error.name === 'AbortError') return false
   return true
@@ -84,6 +91,7 @@ export class ResilientMeetingRepository implements MeetingRepository {
   private readonly cache = new IdempotencyCache<unknown>(30_000)
   private readonly timeoutMs: number
   private readonly attempts: number
+  private readonly limiter: RateLimiter
   private readonly log: Logger
 
   private readonly source: MeetingSource
@@ -92,6 +100,10 @@ export class ResilientMeetingRepository implements MeetingRepository {
     this.source = source
     this.timeoutMs = options.timeoutMs ?? 8_000
     this.attempts = options.attempts ?? 3
+    this.limiter = new RateLimiter({
+      ratePerSecond: options.ratePerSecond ?? 20,
+      burst: options.burst ?? 40,
+    })
     this.log = (options.log ?? logger).child({ source: source.name })
   }
 
@@ -120,9 +132,13 @@ export class ResilientMeetingRepository implements MeetingRepository {
   }
 
   /**
-   * One policy, applied to every read: de-duplicate by key, fail fast when the breaker
-   * is open, bound each attempt with a timeout, retry transient faults with jittered
-   * backoff, and emit one structured span per operation.
+   * One policy, applied to every read: de-duplicate by key, shed load past the rate
+   * limit, fail fast when the breaker is open, bound each attempt with a timeout, retry
+   * transient faults with jittered backoff (or the server's Retry-After), and emit one
+   * structured span per operation.
+   *
+   * Order matters. De-duplication is outermost so a repeated read costs no budget at
+   * all; the limiter sits inside the retry loop so a retry storm is itself shed.
    */
   private read<T>(
     operation: string,
@@ -134,13 +150,14 @@ export class ResilientMeetingRepository implements MeetingRepository {
     return this.cache.run(key, () =>
       log.span(`repository.${operation}`, () =>
         this.breaker.run(() =>
-          retry(() => withTimeout(task, this.timeoutMs), {
+          retry(() => this.limiter.run(() => withTimeout(task, this.timeoutMs)), {
             attempts: this.attempts,
             baseMs: 150,
             maxMs: 2_000,
             isRetryable: isTransient,
             onRetry: ({ attempt, delayMs, error }) => {
               metrics.increment('repository.retry')
+              if (error instanceof RateLimitError) metrics.increment('repository.rate_limited')
               log.warn('repository.retry', {
                 attempt,
                 delayMs,

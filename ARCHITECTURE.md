@@ -70,8 +70,27 @@ failed at the same moment into a second thundering herd; full jitter is the stan
 fix. Only transient faults retry — a `NotFoundError` never becomes a 200, so retrying it
 just wastes the budget.
 
-**What is not implemented:** bulkheads, load shedding, and graceful degradation *between
-services*, because there is exactly one process.
+**Rate limiting and load shedding — implemented.** A token bucket at the repository seam
+(20/s sustained, burst 40) smooths the sustained rate while still allowing the burst that
+callers actually produce: idle, then several reads at once. It **rejects rather than
+queues**, so backpressure is visible as an error instead of hidden as latency.
+
+Ordering in the read pipeline is deliberate: de-duplication is outermost, so a repeated
+read costs no budget at all; the limiter sits *inside* the retry loop, so a retry storm
+is itself shed rather than amplifying the problem it is reacting to.
+
+`RateLimitError` carries `retryAfterMs`, and the retry loop prefers it over its own
+computed backoff — a server that says `Retry-After` knows more than our curve does.
+
+Client-side limiting protects the backend from this tab and this tab from itself. It is
+**not** a security control: a hostile client simply would not run it, so the
+authoritative limit has to live server-side.
+
+Search-as-you-type is debounced (120ms) so a burst of keystrokes costs one transcript
+scan rather than one per character.
+
+**What is not implemented:** bulkheads and graceful degradation *between services*,
+because there is exactly one process.
 
 ## 2. Observability
 
@@ -111,10 +130,15 @@ seed data is public fixture content. `src/state/session.tsx` says this at the to
 file so nobody mistakes it for security. A client-side gate presented as protection is
 worse than no gate, because someone will trust it.
 
-**Secrets — none, by construction.** There is no API key in this repository, no `.env`,
-and no outbound request of any kind: `fetch`, `XMLHttpRequest` and `WebSocket` appear
-nowhere in `src/`, and CSP `connect-src 'self'` would block a third-party call even if
-one were added.
+**Secrets — none, by construction.** There is no API key in this repository and no
+`.env`. `fetch`, `XMLHttpRequest` and `WebSocket` appear nowhere in `src/`, so the
+application makes no API call of any kind.
+
+To be precise about the built artefact rather than only the source: the bundle contains
+exactly one `fetch`, from Vite's `modulepreload` polyfill, which requests the app's own
+JavaScript chunks from the same origin. That is asset loading, not an API call. CSP
+`connect-src 'self'` would block a third-party request even if one were introduced, and
+`npm run check:secrets` scans the artefact on every build.
 
 ### Why the summaries are fixtures, and how to make them real
 

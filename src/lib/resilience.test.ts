@@ -3,7 +3,10 @@ import {
   backoffDelay,
   CircuitBreaker,
   CircuitOpenError,
+  debounce,
   IdempotencyCache,
+  RateLimiter,
+  RateLimitError,
   retry,
   TimeoutError,
   withTimeout,
@@ -284,5 +287,121 @@ describe('metrics', () => {
     const m = new Metrics()
     for (let i = 0; i < 1000; i++) m.observe('latency', i)
     expect(m.percentile('latency', 50)).toBeGreaterThan(800)
+  })
+})
+
+describe('rate limiting', () => {
+  it('allows a burst up to the bucket size, then sheds', () => {
+    const limiter = new RateLimiter({ ratePerSecond: 10, burst: 3, now: () => 0 })
+    expect(limiter.tryAcquire()).toBe(true)
+    expect(limiter.tryAcquire()).toBe(true)
+    expect(limiter.tryAcquire()).toBe(true)
+    expect(limiter.tryAcquire()).toBe(false)
+  })
+
+  it('refills over time at the configured rate', () => {
+    let clock = 0
+    const limiter = new RateLimiter({ ratePerSecond: 10, burst: 1, now: () => clock })
+
+    expect(limiter.tryAcquire()).toBe(true)
+    expect(limiter.tryAcquire()).toBe(false)
+
+    clock = 100 // one token at 10/s
+    expect(limiter.tryAcquire()).toBe(true)
+  })
+
+  it('never banks more than the burst size while idle', () => {
+    let clock = 0
+    const limiter = new RateLimiter({ ratePerSecond: 100, burst: 2, now: () => clock })
+    clock = 60_000
+
+    expect(limiter.tryAcquire()).toBe(true)
+    expect(limiter.tryAcquire()).toBe(true)
+    expect(limiter.tryAcquire()).toBe(false)
+  })
+
+  it('rejects rather than queueing, so backpressure is visible', async () => {
+    const limiter = new RateLimiter({ ratePerSecond: 1, burst: 1, now: () => 0 })
+    await expect(limiter.run(async () => 'ok')).resolves.toBe('ok')
+    await expect(limiter.run(async () => 'ok')).rejects.toBeInstanceOf(RateLimitError)
+  })
+
+  it('reports how long to wait, and the error carries it', async () => {
+    const limiter = new RateLimiter({ ratePerSecond: 2, burst: 1, now: () => 0 })
+    limiter.tryAcquire()
+
+    expect(limiter.retryAfterMs()).toBe(500)
+    await expect(limiter.run(async () => 'x')).rejects.toMatchObject({ retryAfterMs: 500 })
+  })
+
+  it('does not consume budget when the task is never run', () => {
+    const limiter = new RateLimiter({ ratePerSecond: 5, burst: 2, now: () => 0 })
+    expect(limiter.retryAfterMs()).toBe(0)
+    expect(limiter.retryAfterMs()).toBe(0)
+    expect(limiter.tryAcquire()).toBe(true)
+  })
+})
+
+describe('retry honours a server-supplied delay', () => {
+  it('uses Retry-After instead of its own backoff curve', async () => {
+    const delays: number[] = []
+    const task = vi
+      .fn()
+      .mockRejectedValueOnce(new RateLimitError(1234))
+      .mockResolvedValue('ok')
+
+    await retry(task, {
+      sleep: async (ms) => {
+        delays.push(ms)
+      },
+      onRetry: ({ delayMs }) => delays.push(delayMs),
+    })
+
+    expect(delays).toContain(1234)
+  })
+
+  it('falls back to computed backoff for errors that carry no advice', async () => {
+    const seen: number[] = []
+    const task = vi.fn().mockRejectedValueOnce(new Error('transient')).mockResolvedValue('ok')
+
+    await retry(task, {
+      baseMs: 100,
+      random: () => 1,
+      sleep: async () => {},
+      onRetry: ({ delayMs }) => seen.push(delayMs),
+    })
+
+    expect(seen).toEqual([100])
+  })
+})
+
+describe('debounce', () => {
+  it('runs once with the last arguments after the burst settles', () => {
+    vi.useFakeTimers()
+    const fn = vi.fn()
+    const debounced = debounce(fn, 100)
+
+    debounced('a')
+    debounced('b')
+    debounced('c')
+    expect(fn).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(100)
+    expect(fn).toHaveBeenCalledTimes(1)
+    expect(fn).toHaveBeenCalledWith('c')
+    vi.useRealTimers()
+  })
+
+  it('can be cancelled before it fires', () => {
+    vi.useFakeTimers()
+    const fn = vi.fn()
+    const debounced = debounce(fn, 100)
+
+    debounced('a')
+    debounced.cancel()
+    vi.advanceTimersByTime(500)
+
+    expect(fn).not.toHaveBeenCalled()
+    vi.useRealTimers()
   })
 })

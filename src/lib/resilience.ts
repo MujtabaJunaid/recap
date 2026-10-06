@@ -15,6 +15,20 @@ export class TimeoutError extends Error {
   }
 }
 
+/**
+ * Carries the server's own backoff instruction. A 429 that says Retry-After knows more
+ * than our computed backoff does, so the retry loop defers to it.
+ */
+export class RateLimitError extends Error {
+  readonly retryAfterMs: number
+
+  constructor(retryAfterMs: number) {
+    super(`Rate limited; retry in ${retryAfterMs}ms`)
+    this.name = 'RateLimitError'
+    this.retryAfterMs = retryAfterMs
+  }
+}
+
 export class CircuitOpenError extends Error {
   readonly retryAfterMs: number
 
@@ -95,7 +109,9 @@ export async function retry<T>(task: () => Promise<T>, options: RetryOptions = {
       lastError = error
       const final = attempt === attempts - 1
       if (final || !isRetryable(error)) throw error
-      const delayMs = backoffDelay(attempt, baseMs, maxMs, random)
+      // A server that tells us when to come back knows better than our own curve.
+      const advised = error instanceof RateLimitError ? error.retryAfterMs : undefined
+      const delayMs = advised ?? backoffDelay(attempt, baseMs, maxMs, random)
       onRetry?.({ attempt: attempt + 1, delayMs, error })
       await sleep(delayMs)
     }
@@ -213,4 +229,90 @@ export class IdempotencyCache<T> {
     this.inFlight.delete(key)
     this.settled.delete(key)
   }
+}
+
+export interface RateLimitOptions {
+  /** Sustained rate. */
+  ratePerSecond: number
+  /** How much unused budget can be saved up for a burst. */
+  burst?: number
+  now?: () => number
+}
+
+/**
+ * Token bucket. Smooths a sustained rate while still allowing a short burst, which is
+ * what callers actually do: idle, then fire several requests at once.
+ *
+ * Client-side limiting protects the backend from this tab and this tab from its own
+ * retry storms. It is not a security control — a hostile client simply would not run it.
+ * The authoritative limit has to live server-side.
+ */
+export class RateLimiter {
+  private tokens: number
+  private lastRefill: number
+
+  private readonly ratePerSecond: number
+  private readonly burst: number
+  private readonly now: () => number
+
+  constructor(options: RateLimitOptions) {
+    this.ratePerSecond = options.ratePerSecond
+    this.burst = options.burst ?? Math.max(1, Math.ceil(options.ratePerSecond))
+    this.now = options.now ?? Date.now
+    this.tokens = this.burst
+    this.lastRefill = this.now()
+  }
+
+  private refill(): void {
+    const elapsed = (this.now() - this.lastRefill) / 1000
+    if (elapsed <= 0) return
+    this.tokens = Math.min(this.burst, this.tokens + elapsed * this.ratePerSecond)
+    this.lastRefill = this.now()
+  }
+
+  /** Milliseconds until a token is available; 0 when one is free right now. */
+  retryAfterMs(): number {
+    this.refill()
+    if (this.tokens >= 1) return 0
+    return Math.ceil(((1 - this.tokens) / this.ratePerSecond) * 1000)
+  }
+
+  tryAcquire(): boolean {
+    this.refill()
+    if (this.tokens < 1) return false
+    this.tokens -= 1
+    return true
+  }
+
+  /** Rejects rather than queueing, so backpressure is visible instead of hidden latency. */
+  async run<T>(task: () => Promise<T>): Promise<T> {
+    if (!this.tryAcquire()) throw new RateLimitError(this.retryAfterMs())
+    return task()
+  }
+}
+
+/**
+ * Collapses a burst of calls into the last one after the input settles. Used for
+ * search-as-you-type, where every keystroke would otherwise scan every transcript.
+ */
+export function debounce<A extends unknown[]>(
+  fn: (...args: A) => void,
+  waitMs: number,
+): ((...args: A) => void) & { cancel: () => void } {
+  let timer: ReturnType<typeof setTimeout> | undefined
+
+  const debounced = (...args: A) => {
+    if (timer !== undefined) clearTimeout(timer)
+    timer = setTimeout(() => {
+      timer = undefined
+      fn(...args)
+    }, waitMs)
+  }
+
+  debounced.cancel = () => {
+    if (timer !== undefined) clearTimeout(timer)
+    timer = undefined
+  }
+
+  return debounced
 }
