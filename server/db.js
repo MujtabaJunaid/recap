@@ -90,6 +90,44 @@ async function runMigration(client) {
       state      JSONB NOT NULL DEFAULT '{}'::jsonb,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+
+    -- Audio lives in the row rather than object storage. For recordings of this
+    -- length that is simpler and has no second set of credentials to leak; past a few
+    -- hundred MB it should move to S3 or R2 and keep only the key here.
+    CREATE TABLE IF NOT EXISTS recordings (
+      id          BIGSERIAL PRIMARY KEY,
+      user_id     BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title       TEXT NOT NULL DEFAULT 'Untitled recording',
+      mime        TEXT NOT NULL,
+      bytes       INTEGER NOT NULL,
+      duration_s  REAL NOT NULL DEFAULT 0,
+      audio       BYTEA NOT NULL,
+      transcript  JSONB NOT NULL DEFAULT '[]'::jsonb,
+      status      TEXT NOT NULL DEFAULT 'processing',
+      error       TEXT,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE INDEX IF NOT EXISTS recordings_user_created
+      ON recordings (user_id, created_at DESC);
+
+    -- A finished call: its transcript plus the summary generated from it.
+    CREATE TABLE IF NOT EXISTS meetings (
+      id           BIGSERIAL PRIMARY KEY,
+      user_id      BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title        TEXT NOT NULL,
+      platform     TEXT NOT NULL DEFAULT 'mock',
+      source       TEXT NOT NULL DEFAULT 'simulated',
+      duration_s   REAL NOT NULL DEFAULT 0,
+      participants JSONB NOT NULL DEFAULT '[]'::jsonb,
+      transcript   JSONB NOT NULL DEFAULT '[]'::jsonb,
+      summary      JSONB,
+      status       TEXT NOT NULL DEFAULT 'processing',
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE INDEX IF NOT EXISTS meetings_user_created
+      ON meetings (user_id, created_at DESC);
   `)
   } catch (error) {
     // 23505 (duplicate key on a catalogue index) and 42P07 (relation already exists)
@@ -176,4 +214,147 @@ export async function putState(userId, state) {
 
 export async function close() {
   await pool.end()
+}
+
+// ---------------------------------------------------------------------------
+// Recordings
+//
+// Every query is scoped by user_id as well as id. Checking ownership in the WHERE
+// clause rather than after the read means a wrong id simply returns nothing — there is
+// no window where the wrong row has been loaded.
+// ---------------------------------------------------------------------------
+
+export async function createRecording({ userId, title, mime, audio, durationSeconds }) {
+  const { rows } = await pool.query(
+    `INSERT INTO recordings (user_id, title, mime, bytes, duration_s, audio, status)
+     VALUES ($1, $2, $3, $4, $5, $6, 'processing')
+     RETURNING id, title, mime, bytes, duration_s, status, created_at`,
+    [userId, title, mime, audio.length, durationSeconds, audio],
+  )
+  return rows[0]
+}
+
+export async function setTranscript(id, userId, transcript) {
+  await pool.query(
+    `UPDATE recordings SET transcript = $1::jsonb, status = 'ready', error = NULL
+     WHERE id = $2 AND user_id = $3`,
+    [JSON.stringify(transcript), id, userId],
+  )
+}
+
+export async function setRecordingFailed(id, userId, reason) {
+  await pool.query(
+    `UPDATE recordings SET status = 'failed', error = $1 WHERE id = $2 AND user_id = $3`,
+    [reason, id, userId],
+  )
+}
+
+export async function listRecordings(userId) {
+  const { rows } = await pool.query(
+    `SELECT id, title, mime, bytes, duration_s, status, error, created_at,
+            jsonb_array_length(transcript) AS lines
+     FROM recordings WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`,
+    [userId],
+  )
+  return rows
+}
+
+export async function getRecording(id, userId) {
+  const { rows } = await pool.query(
+    `SELECT id, title, mime, bytes, duration_s, status, error, transcript, created_at
+     FROM recordings WHERE id = $1 AND user_id = $2`,
+    [id, userId],
+  )
+  return rows[0] ?? null
+}
+
+/** Audio is fetched separately so listing never drags megabytes through the pool. */
+export async function getRecordingAudio(id, userId) {
+  const { rows } = await pool.query(
+    'SELECT mime, audio FROM recordings WHERE id = $1 AND user_id = $2',
+    [id, userId],
+  )
+  return rows[0] ?? null
+}
+
+export async function deleteRecording(id, userId) {
+  const { rowCount } = await pool.query(
+    'DELETE FROM recordings WHERE id = $1 AND user_id = $2',
+    [id, userId],
+  )
+  return rowCount > 0
+}
+
+// ---------------------------------------------------------------------------
+// Meetings
+// ---------------------------------------------------------------------------
+
+export async function createMeeting({
+  userId,
+  title,
+  platform,
+  source,
+  durationSeconds,
+  participants,
+  transcript,
+}) {
+  const { rows } = await pool.query(
+    `INSERT INTO meetings
+       (user_id, title, platform, source, duration_s, participants, transcript, status)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, 'processing')
+     RETURNING id, title, platform, source, duration_s, status, created_at`,
+    [
+      userId,
+      title,
+      platform,
+      source,
+      durationSeconds,
+      JSON.stringify(participants ?? []),
+      JSON.stringify(transcript ?? []),
+    ],
+  )
+  return rows[0]
+}
+
+export async function setMeetingSummary(id, userId, summary, title) {
+  await pool.query(
+    `UPDATE meetings SET summary = $1::jsonb, title = COALESCE($2, title), status = 'ready'
+     WHERE id = $3 AND user_id = $4`,
+    [JSON.stringify(summary), title ?? null, id, userId],
+  )
+}
+
+export async function setMeetingFailed(id, userId) {
+  await pool.query("UPDATE meetings SET status = 'failed' WHERE id = $1 AND user_id = $2", [
+    id,
+    userId,
+  ])
+}
+
+export async function listMeetings(userId) {
+  const { rows } = await pool.query(
+    `SELECT id, title, platform, source, duration_s, status, participants, summary, created_at,
+            jsonb_array_length(transcript) AS lines
+     FROM meetings WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`,
+    [userId],
+  )
+  return rows
+}
+
+export async function getMeetingById(id, userId) {
+  const { rows } = await pool.query(
+    `SELECT id, title, platform, source, duration_s, status, participants, transcript,
+            summary, created_at
+     FROM meetings WHERE id = $1 AND user_id = $2`,
+    [id, userId],
+  )
+  return rows[0] ?? null
+}
+
+export async function deleteMeeting(id, userId) {
+  const { rowCount } = await pool.query('DELETE FROM meetings WHERE id = $1 AND user_id = $2', [
+    id,
+    userId,
+  ])
+  return rowCount > 0
 }

@@ -10,9 +10,19 @@
   --color-ink-400: #767e94;
   --color-ink-300: #9ba2b5;
   --color-ink-200: #c7ccda;
+  --color-brand-300: #a5b4fc;
   --color-brand-400: #818cf8;
   --color-brand-500: #6366f1;
   --color-brand-600: #4f46e5;
+
+  /* One hue per team, so a dense list is scannable by colour before it is read. */
+  --color-team-product: #818cf8;
+  --color-team-sales: #34d399;
+  --color-team-success: #22d3ee;
+  --color-team-engineering: #fbbf24;
+  --color-team-design: #f472b6;
+  --color-team-support: #fb923c;
+  --color-team-leadership: #c084fc;
 }
 
 html,
@@ -22,9 +32,11 @@ body,
 }
 
 body {
-  /* A faint wash off the top-left stops the page reading as flat black. */
+  /* Two washes rather than one: an indigo top-left and a cooler teal bottom-right, so
+     a long page has somewhere to travel instead of sitting on flat black. */
   background:
-    radial-gradient(900px 520px at 12% -8%, rgb(99 102 241 / 0.10), transparent 60%),
+    radial-gradient(1000px 560px at 10% -10%, rgb(99 102 241 / 0.14), transparent 62%),
+    radial-gradient(760px 520px at 92% 108%, rgb(34 211 238 / 0.07), transparent 60%),
     var(--color-ink-950);
   background-attachment: fixed;
   color: var(--color-ink-200);
@@ -46,6 +58,23 @@ body {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-ink-600);
+}
+
+/* Headline text picks up a slight gradient. Subtle at this size — it reads as depth
+   rather than as a gradient, which is the point. */
+.display {
+  background: linear-gradient(135deg, #ffffff 0%, #ffffff 45%, var(--color-brand-300) 140%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* A soft bloom behind the primary action, so the main thing on a screen is obvious
+   without making it bigger or louder. */
+.glow {
+  box-shadow:
+    0 0 0 1px rgb(99 102 241 / 0.25),
+    0 8px 28px -10px rgb(99 102 241 / 0.55);
 }
 
 /* One shared elevation so cards read as surfaces rather than outlined boxes. */
@@ -106,4 +135,37 @@ mark {
   color: inherit;
   border-radius: 3px;
   padding: 0 1px;
+}
+
+/* A hairline of colour on the leading edge of a card, keyed to its team. Cheaper than
+   an icon and faster to scan than a label. */
+.accent-edge {
+  position: relative;
+  overflow: hidden;
+}
+
+.accent-edge::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--accent, var(--color-ink-700));
+  opacity: 0.85;
+}
+
+@keyframes shimmer {
+  0% { background-position: -340px 0; }
+  100% { background-position: 340px 0; }
+}
+
+/* Loading rows that look deliberate rather than broken. */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-ink-850) 0%,
+    var(--color-ink-800) 50%,
+    var(--color-ink-850) 100%
+  );
+  background-size: 680px 100%;
+  animation: shimmer 1.6s infinite linear;
 }

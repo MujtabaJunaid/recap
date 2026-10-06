@@ -9,6 +9,9 @@ import { Actions } from './routes/Actions'
 import { HighlightsFeed } from './routes/HighlightsFeed'
 import { SharedClipPage } from './routes/SharedClipPage'
 import { SignIn } from './routes/SignIn'
+import { Record } from './routes/Record'
+import { JoinCall } from './routes/JoinCall'
+import { SavedMeeting } from './routes/SavedMeeting'
 import { SessionProvider, useSession } from './state/session'
 import { WorkspaceProvider } from './state/workspace'
 
@@ -48,6 +51,9 @@ function WorkspaceRoutes() {
           <Route path="/" element={<Meetings />} />
           <Route path="/m/:id" element={<MeetingRoute />} />
           <Route path="/search" element={<Search />} />
+          <Route path="/join" element={<JoinCall />} />
+          <Route path="/record" element={<Record />} />
+          <Route path="/call/:id" element={<SavedMeeting />} />
           <Route path="/actions" element={<Actions />} />
           <Route path="/highlights" element={<HighlightsFeed />} />
           <Route path="*" element={<Navigate to="/" replace />} />

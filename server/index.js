@@ -20,7 +20,26 @@
  */
 import { createServer } from 'node:http'
 import { createHmac, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto'
-import { authenticate, createUser, getState, migrate, putState } from './db.js'
+import {
+  authenticate,
+  createMeeting,
+  createUser,
+  deleteMeeting,
+  getMeetingById,
+  listMeetings,
+  setMeetingFailed,
+  setMeetingSummary,
+  deleteRecording,
+  getRecording,
+  getRecordingAudio,
+  getState,
+  listRecordings,
+  migrate,
+  putState,
+} from './db.js'
+import { ingest, looksLikeAudio, MAX_AUDIO_BYTES, normaliseMime } from './recordings.js'
+import { coach, validateContext } from './live-coach.js'
+import { summarise, validateTranscript } from './meetings.js'
 
 const PORT = process.env.PORT || 3000
 const API_KEY = process.env.GROQ_API_KEY
@@ -52,6 +71,8 @@ const SCRYPT_N = 16384
 const SCRYPT_KEYLEN = 64
 
 const MAX_BODY_BYTES = 16 * 1024
+/** An hour of transcript is far past the default JSON cap. */
+const MAX_TRANSCRIPT_BYTES = 512 * 1024
 const UPSTREAM_TIMEOUT_MS = 20_000
 
 // ---------------------------------------------------------------------------
@@ -494,8 +515,9 @@ function corsHeaders(origin) {
     // Must list every method the API actually serves. GET and PUT were added with the
     // state endpoints and omitted here, so the browser rejected the preflight and
     // per-user sync failed silently — invisible to curl, which sends no preflight.
-    'access-control-allow-methods': 'GET, POST, PUT, OPTIONS',
-    'access-control-allow-headers': 'content-type, authorization',
+    'access-control-allow-methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'access-control-allow-headers':
+      'content-type, authorization, x-recording-title, x-recording-duration',
     'access-control-max-age': '86400',
     vary: 'origin',
   }
@@ -532,14 +554,18 @@ function send(res, status, body, extra = {}) {
   res.end(payload)
 }
 
-class PayloadTooLargeError extends Error {
-  constructor() {
-    super('payload too large')
-    this.name = 'PayloadTooLargeError'
+/** Header values are attacker-controlled; strip anything that is not plain text. */
+function decodeHeader(value) {
+  if (typeof value !== 'string') return ''
+  try {
+    return decodeURIComponent(value).replace(/[ -]/g, '').trim()
+  } catch {
+    return ''
   }
 }
 
-function readBody(req) {
+/** Raw bytes rather than JSON, for audio uploads. Bounded by the caller. */
+function readRawBody(req, maxBytes) {
   return new Promise((resolve, reject) => {
     let size = 0
     let rejected = false
@@ -547,7 +573,37 @@ function readBody(req) {
     req.on('data', (chunk) => {
       if (rejected) return
       size += chunk.length
-      if (size > MAX_BODY_BYTES) {
+      if (size > maxBytes) {
+        rejected = true
+        req.resume()
+        reject(new PayloadTooLargeError())
+        return
+      }
+      chunks.push(chunk)
+    })
+    req.on('end', () => {
+      if (!rejected) resolve(Buffer.concat(chunks))
+    })
+    req.on('error', reject)
+  })
+}
+
+class PayloadTooLargeError extends Error {
+  constructor() {
+    super('payload too large')
+    this.name = 'PayloadTooLargeError'
+  }
+}
+
+function readBody(req, maxBytes = MAX_BODY_BYTES) {
+  return new Promise((resolve, reject) => {
+    let size = 0
+    let rejected = false
+    const chunks = []
+    req.on('data', (chunk) => {
+      if (rejected) return
+      size += chunk.length
+      if (size > maxBytes) {
         rejected = true
         // Drain rather than destroy: killing the socket makes the router report 503,
         // which hides a client error behind what looks like an outage.
@@ -600,7 +656,22 @@ const server = createServer(async (req, res) => {
   const isPutState = req.method === 'PUT' && req.url === '/api/state'
   const isPlan = req.method === 'POST' && req.url === '/api/action-plan'
 
-  if (!isLogin && !isSignup && !isGetState && !isPutState && !isPlan) {
+  const recordingMatch = /^\/api\/recordings(?:\/(\d+)(\/audio)?)?$/.exec(req.url || '')
+  const isRecordings = Boolean(recordingMatch)
+  const isCoach = req.method === 'POST' && req.url === '/api/live-coach'
+  const meetingMatch = /^\/api\/meetings(?:\/(\d+))?$/.exec(req.url || '')
+  const isMeetings = Boolean(meetingMatch)
+
+  if (
+    !isLogin &&
+    !isSignup &&
+    !isGetState &&
+    !isPutState &&
+    !isPlan &&
+    !isRecordings &&
+    !isCoach &&
+    !isMeetings
+  ) {
     send(res, 404, { error: 'not found' }, cors)
     return
   }
@@ -771,6 +842,263 @@ const server = createServer(async (req, res) => {
     } catch (error) {
       const tooLarge = error.name === 'PayloadTooLargeError'
       send(res, tooLarge ? 413 : 400, { error: error.message }, cors)
+    }
+    return
+  }
+
+  // ---- Meetings --------------------------------------------------------------------
+  if (isMeetings) {
+    const session = requireSession(req)
+    if (!session?.uid || session.uid === '0') {
+      send(res, 401, { error: 'sign in required' }, { ...cors, 'www-authenticate': 'Bearer' })
+      return
+    }
+    const id = meetingMatch[1]
+
+    try {
+      if (req.method === 'GET' && !id) {
+        send(res, 200, { meetings: await listMeetings(session.uid) }, cors)
+        return
+      }
+      if (req.method === 'GET' && id) {
+        const row = await getMeetingById(id, session.uid)
+        if (!row) {
+          send(res, 404, { error: 'not found' }, cors)
+          return
+        }
+        send(res, 200, { meeting: row }, cors)
+        return
+      }
+      if (req.method === 'DELETE' && id) {
+        const removed = await deleteMeeting(id, session.uid)
+        send(res, removed ? 204 : 404, removed ? {} : { error: 'not found' }, cors)
+        return
+      }
+      if (req.method === 'POST' && !id) {
+        const body = await readBody(req, MAX_TRANSCRIPT_BYTES)
+        const problem = validateTranscript(body?.transcript)
+        if (problem) {
+          send(res, 400, { error: 'invalid request', details: [problem] }, cors)
+          return
+        }
+        if (!API_KEY) {
+          send(res, 503, { error: 'summarisation is unavailable' }, cors)
+          return
+        }
+
+        const row = await createMeeting({
+          userId: session.uid,
+          title: String(body.title || 'Untitled meeting').slice(0, 200),
+          platform: ['zoom', 'meet', 'teams', 'mock'].includes(body.platform)
+            ? body.platform
+            : 'mock',
+          source: body.source === 'recorded' ? 'recorded' : 'simulated',
+          durationSeconds: Math.max(0, Number(body.durationSeconds) || 0),
+          participants: Array.isArray(body.participants)
+            ? body.participants.slice(0, 20).map((p) => String(p).slice(0, 80))
+            : [],
+          transcript: body.transcript,
+        })
+
+        // The transcript is stored before the model is called. It is the thing that
+        // cannot be regenerated, and a summarisation failure must not lose it.
+        const work = (async () => {
+          try {
+            const summary = await summarise(body.transcript, API_KEY)
+            await setMeetingSummary(row.id, session.uid, summary, summary.title)
+            log('info', 'meeting.summarised', {
+              meetingId: String(row.id),
+              lines: body.transcript.length,
+              actions: summary.actionItems.length,
+            })
+          } catch (error) {
+            await setMeetingFailed(row.id, session.uid)
+            log('error', 'meeting.summarise_failed', {
+              meetingId: String(row.id),
+              errorName: error?.name,
+              errorMessage: safeErrorMessage(error),
+            })
+          }
+        })()
+
+        log('info', 'meeting.created', {
+          correlationId,
+          meetingId: String(row.id),
+          lines: body.transcript.length,
+        })
+        send(res, 202, { meeting: row }, cors)
+        void work
+        return
+      }
+      send(res, 405, { error: 'method not allowed' }, cors)
+    } catch (error) {
+      if (error.name === 'PayloadTooLargeError') {
+        send(res, 413, { error: 'payload too large' }, cors)
+        return
+      }
+      log('error', 'meeting.failed', { correlationId, errorName: error?.name })
+      send(res, 500, { error: 'could not handle that meeting' }, cors)
+    }
+    return
+  }
+
+  // ---- Live coaching -------------------------------------------------------------
+  if (isCoach) {
+    const session = requireSession(req)
+    if (!session) {
+      send(res, 401, { error: 'sign in required' }, { ...cors, 'www-authenticate': 'Bearer' })
+      return
+    }
+
+    const started = Date.now()
+    try {
+      const body = await readBody(req)
+      const problem = validateContext(body?.lines)
+      if (problem) {
+        send(res, 400, { error: 'invalid request', details: [problem] }, cors)
+        return
+      }
+      if (!API_KEY) {
+        send(res, 503, { error: 'coaching is unavailable' }, cors)
+        return
+      }
+
+      const suggestion = await coach(body.lines, API_KEY)
+      // Line count and latency only. What was said in the room never goes to a log.
+      log('info', 'coach.suggested', {
+        correlationId,
+        lines: body.lines.length,
+        durationMs: Date.now() - started,
+      })
+      send(res, 200, { suggestion }, cors)
+    } catch (error) {
+      if (error.name === 'PayloadTooLargeError') {
+        send(res, 413, { error: 'payload too large' }, cors)
+        return
+      }
+      log('error', 'coach.failed', {
+        correlationId,
+        durationMs: Date.now() - started,
+        errorName: error?.name,
+        errorMessage: safeErrorMessage(error),
+      })
+      send(res, 502, { error: 'could not suggest a response' }, cors)
+    }
+    return
+  }
+
+  // ---- Recordings ----------------------------------------------------------------
+  if (isRecordings) {
+    const session = requireSession(req)
+    if (!session?.uid || session.uid === '0') {
+      send(res, 401, { error: 'sign in required' }, { ...cors, 'www-authenticate': 'Bearer' })
+      return
+    }
+
+    const id = recordingMatch[1]
+    const wantsAudio = Boolean(recordingMatch[2])
+
+    try {
+      if (req.method === 'GET' && !id) {
+        send(res, 200, { recordings: await listRecordings(session.uid) }, cors)
+        return
+      }
+
+      if (req.method === 'GET' && id && wantsAudio) {
+        const row = await getRecordingAudio(id, session.uid)
+        // Scoped by user in the query, so someone else's id is simply not found.
+        if (!row) {
+          send(res, 404, { error: 'not found' }, cors)
+          return
+        }
+        res.writeHead(200, {
+          ...SECURITY_HEADERS,
+          ...cors,
+          'content-type': row.mime,
+          'content-length': String(row.audio.length),
+          // Private: this is a user's own recording and must not sit in a shared cache.
+          'cache-control': 'private, max-age=3600',
+          'accept-ranges': 'none',
+        })
+        res.end(row.audio)
+        return
+      }
+
+      if (req.method === 'GET' && id) {
+        const row = await getRecording(id, session.uid)
+        if (!row) {
+          send(res, 404, { error: 'not found' }, cors)
+          return
+        }
+        send(res, 200, { recording: row }, cors)
+        return
+      }
+
+      if (req.method === 'DELETE' && id) {
+        const removed = await deleteRecording(id, session.uid)
+        send(res, removed ? 204 : 404, removed ? {} : { error: 'not found' }, cors)
+        return
+      }
+
+      if (req.method === 'POST' && !id) {
+        if (!API_KEY) {
+          send(res, 503, { error: 'transcription is unavailable' }, cors)
+          return
+        }
+
+        const declared = normaliseMime(req.headers['content-type'])
+        if (!declared) {
+          send(res, 415, { error: 'unsupported audio format' }, cors)
+          return
+        }
+
+        const audio = await readRawBody(req, MAX_AUDIO_BYTES)
+        if (audio.length < 1024) {
+          send(res, 400, { error: 'recording is too short' }, cors)
+          return
+        }
+        // The declared content type is a claim; the magic bytes are the evidence.
+        if (!looksLikeAudio(audio)) {
+          send(res, 415, { error: 'that does not look like audio' }, cors)
+          return
+        }
+
+        const title = decodeHeader(req.headers['x-recording-title']) || 'Untitled recording'
+        const durationSeconds = Math.max(0, Number(req.headers['x-recording-duration']) || 0)
+
+        const { row, work } = await ingest({
+          userId: session.uid,
+          title: title.slice(0, 200),
+          mime: declared.mime,
+          ext: declared.ext,
+          audio,
+          durationSeconds,
+          apiKey: API_KEY,
+          log,
+        })
+
+        log('info', 'recording.stored', {
+          correlationId,
+          recordingId: String(row.id),
+          bytes: audio.length,
+        })
+
+        // Answer as soon as the audio is safely stored. Transcription continues in the
+        // background and the client polls; making the upload wait two minutes for
+        // Whisper would be a worse product and a worse use of a dyno.
+        send(res, 202, { recording: row }, cors)
+        void work
+        return
+      }
+
+      send(res, 405, { error: 'method not allowed' }, cors)
+    } catch (error) {
+      if (error.name === 'PayloadTooLargeError') {
+        send(res, 413, { error: 'recording is too large' }, cors)
+        return
+      }
+      log('error', 'recording.failed', { correlationId, errorName: error?.name })
+      send(res, 500, { error: 'could not handle that recording' }, cors)
     }
     return
   }
