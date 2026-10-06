@@ -122,17 +122,22 @@ export function Player({
       </div>
 
       <div className="px-3 pb-3 pt-2.5">
-        <div className="mb-1.5 flex gap-px overflow-hidden rounded" aria-hidden>
+        <div className="mb-1.5 flex gap-px overflow-hidden rounded" role="group" aria-label="Chapters">
           {meeting.chapters.map((c) => (
             <button
               key={c.id}
-              title={c.title}
+              title={`${c.title} — ${timecode(c.start)}`}
+              aria-label={`Jump to ${c.title} at ${timecode(c.start)}`}
               onClick={() => seek(c.start)}
               style={{ flexGrow: c.end - c.start }}
-              className={`h-1 transition-colors ${
-                activeChapter?.id === c.id ? 'bg-brand-500' : 'bg-ink-700 hover:bg-ink-600'
+              // A 4px strip is below the ~24px minimum a finger can hit reliably, so
+              // the hit area is padded out while the visible bar stays thin.
+              className={`group/chapter relative h-1 py-2 -my-2 transition-colors ${
+                activeChapter?.id === c.id ? 'bg-brand-500' : 'bg-ink-700 hover:bg-ink-500'
               }`}
-            />
+            >
+              <span className="pointer-events-none absolute inset-x-0 top-2 block h-1 rounded-[1px]" />
+            </button>
           ))}
         </div>
 

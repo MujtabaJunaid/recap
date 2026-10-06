@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useSession } from '../state/session'
 import { useWorkspace } from '../state/workspace'
 import { EmptyWorkspace } from './EmptyWorkspace'
+import { SavedCalls } from '../components/SavedCalls'
 import { MEETINGS } from '../data'
 import { person } from '../data/people'
 import { AvatarStack, Icon, ICONS, PlatformTag, Pill } from '../components/primitives'
@@ -30,8 +31,15 @@ export function Meetings() {
   }, [])
 
   // A new account has recorded nothing. Showing someone else's meetings there would be
-  // both confusing and untrue.
-  if (!hasMeetings) return <EmptyWorkspace />
+  // both confusing and untrue. Calls it actually sat in are shown either way.
+  if (!hasMeetings) {
+    return (
+      <>
+        <SavedCalls />
+        <EmptyWorkspace />
+      </>
+    )
+  }
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-7 md:px-6">
@@ -81,6 +89,8 @@ export function Meetings() {
           </div>
         </div>
       )}
+
+      <SavedCalls inline />
 
       <div className="mt-5 flex flex-wrap gap-1.5">
         {TEAMS.map((t) => (

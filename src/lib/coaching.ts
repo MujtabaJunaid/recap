@@ -53,6 +53,10 @@ export const WORK_STYLES: WorkStyle[] = [
   },
 ]
 
+/**
+ * Defaults to the style built around the hardest part being *starting*, which is the
+ * common ask. Every user can change it, and nothing is ever inferred about anyone.
+ */
 export const DEFAULT_WORK_STYLE: WorkStyleId = 'momentum'
 
 export type TaskKind = 'write' | 'send' | 'confirm' | 'build' | 'schedule' | 'decide' | 'general'

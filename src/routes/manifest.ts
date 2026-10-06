@@ -6,7 +6,14 @@
  * index.html per route, and `manifest.test.ts` fails if a path declared in App.tsx is
  * missing here — that drift has bitten twice.
  */
-export const STATIC_ROUTES = ['actions', 'highlights', 'search', 'signin'] as const
+export const STATIC_ROUTES = [
+  'actions',
+  'highlights',
+  'join',
+  'record',
+  'search',
+  'signin',
+] as const
 
 /** Parameterised routes are expanded from seed data at build time. */
-export const DYNAMIC_ROUTE_PREFIXES = ['m', 'share'] as const
+export const DYNAMIC_ROUTE_PREFIXES = ['m', 'share', 'call'] as const

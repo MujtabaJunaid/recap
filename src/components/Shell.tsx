@@ -9,6 +9,8 @@ import { relativeDay } from '../lib/format'
 
 const NAV = [
   { to: '/', label: 'Meetings', icon: ICONS.home, end: true },
+  { to: '/join', label: 'Join a call', icon: ICONS.video, end: false },
+  { to: '/record', label: 'Record', icon: ICONS.mic, end: false },
   { to: '/actions', label: 'Action items', icon: ICONS.check, end: false },
   { to: '/highlights', label: 'Highlights', icon: ICONS.scissors, end: false },
 ]

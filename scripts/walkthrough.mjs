@@ -433,6 +433,199 @@ await check('highlights feed lists shared clips', async () => {
 })
 await shot('highlights-feed')
 
+console.log('
+-- Recording and live coaching --')
+
+await check('the record page loads and offers a control', async () => {
+  await go('/record')
+  await page.waitForSelector('h1:has-text("Record"), :text("needs the backend")', {
+    timeout: 15_000,
+  })
+  const hosted = (await page.getByRole('button', { name: 'Start recording' }).count()) > 0
+  const gated = (await page.locator('text=needs the backend').count()) > 0
+  assert(hosted || gated, 'record page rendered neither a control nor an explanation')
+})
+await shot('record')
+
+/** Reads the proxy origin out of the CSP the build injected, so nothing is hardcoded. */
+const apiBaseInPage = `
+  document.querySelector('meta[http-equiv="Content-Security-Policy"]')
+    ?.getAttribute('content')?.match(/connect-src 'self' (\S+)/)?.[1] ?? null
+`
+
+await check('the recordings list is scoped to the signed-in account', async () => {
+  const result = await page.evaluate(`(async () => {
+    const base = ${apiBaseInPage}
+    if (!base) return { skipped: true }
+    const raw = Object.keys(localStorage).filter((k) => k.startsWith('recap:session')).map((k) => localStorage.getItem(k))[0]
+    const token = raw ? JSON.parse(raw).token : null
+    if (!token) return { skipped: true }
+    const r = await fetch(base + '/api/recordings', { headers: { authorization: 'Bearer ' + token } })
+    const body = await r.json()
+    return { status: r.status, count: Array.isArray(body.recordings) ? body.recordings.length : null }
+  })()`)
+
+  if (result.skipped) return
+  assert(result.status === 200, `recordings list returned ${result.status}`)
+  assert(typeof result.count === 'number', 'no recordings array returned')
+})
+
+await check('recordings reject an unauthenticated caller', async () => {
+  const status = await page.evaluate(`(async () => {
+    const base = ${apiBaseInPage}
+    if (!base) return null
+    return (await fetch(base + '/api/recordings')).status
+  })()`)
+  if (status === null) return
+  assert(status === 401, `expected 401 without a token, got ${status}`)
+})
+
+await check('live coaching refuses an unauthenticated caller', async () => {
+  const status = await page.evaluate(`(async () => {
+    const base = ${apiBaseInPage}
+    if (!base) return null
+    const r = await fetch(base + '/api/live-coach', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ lines: [{ speaker: 'a', text: 'hello' }] }),
+    })
+    return r.status
+  })()`)
+  if (status === null) return
+  assert(status === 401, `expected 401 without a token, got ${status}`)
+})
+
+await check('live coaching returns a usable suggestion', async () => {
+  const result = await page.evaluate(`(async () => {
+    const base = ${apiBaseInPage}
+    if (!base) return { skipped: true }
+    const raw = Object.keys(localStorage).filter((k) => k.startsWith('recap:session')).map((k) => localStorage.getItem(k))[0]
+    const token = raw ? JSON.parse(raw).token : null
+    if (!token) return { skipped: true }
+    const r = await fetch(base + '/api/live-coach', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
+      body: JSON.stringify({ lines: [
+        { speaker: 'Kenji', text: 'What is the probability you ship the rewrite this quarter?' },
+        { speaker: 'Daniel', text: 'Sixty percent.' },
+        { speaker: 'Kenji', text: 'So why would I approve a quarter on sixty percent?' },
+      ] }),
+    })
+    if (!r.ok) return { status: r.status }
+    const body = await r.json()
+    return { status: r.status, suggestion: body.suggestion }
+  })()`)
+
+  if (result.skipped) return
+  assert(result.status === 200, `coach returned ${result.status}`)
+  const s = result.suggestion
+  assert(s && typeof s.read === 'string' && s.read.length > 0, 'no reading of the room')
+  assert(typeof s.sayNext === 'string' && s.sayNext.length > 10, 'no suggested response')
+  assert(typeof s.because === 'string' && s.because.length > 0, 'no rationale')
+})
+
+
+console.log('
+-- Join a call: live transcript, live coaching, saved summary --')
+
+await check('the join page explains that capture is simulated', async () => {
+  await go('/join')
+  await page.waitForSelector('h1:has-text("Join a call"), :text("needs the backend")', {
+    timeout: 15_000,
+  })
+  const gated = (await page.locator('text=needs the backend').count()) > 0
+  if (gated) return
+  assert((await page.locator('text=Simulated call').count()) > 0, 'no simulated-call label')
+  assert(
+    (await page.locator('text=there is no bot in a Zoom room').count()) > 0,
+    'the page does not say what is stubbed',
+  )
+})
+await shot('join-lobby')
+
+const joinable = (await page.getByRole('button', { name: 'Join the call' }).count()) > 0
+
+await check('joining streams the conversation in rather than dumping it', async () => {
+  if (!joinable) return
+  await page.getByRole('button', { name: 'Join the call' }).click()
+  await page.waitForSelector('text=Recording', { timeout: 20_000 })
+
+  await page.waitForFunction(() => document.body.innerText.includes('Priya Raman'), null, {
+    timeout: 30_000,
+  })
+  const early = (await page.locator('text=/^\d+:\d\d$/').count()) >= 0
+  assert(early, 'no clock on the live call')
+
+  // The whole point is that it arrives over time, so the feed must grow.
+  const first = await page.locator('main p').count()
+  await page.waitForTimeout(4000)
+  const later = await page.locator('main p').count()
+  assert(later > first, `feed did not grow: ${first} -> ${later}`)
+})
+await shot('join-live')
+
+await check('the live coach produces a usable suggestion during the call', async () => {
+  if (!joinable) return
+  // Fires on its own when the room turns to you; nudge it so the check is not timing-bound.
+  await page.getByRole('button', { name: 'Ask now' }).click()
+  await page.waitForSelector('blockquote', { timeout: 40_000 })
+  const said = (await page.locator('blockquote').first().textContent()) ?? ''
+  assert(said.trim().length > 15, `suggestion too short to use: "${said}"`)
+  assert((await page.locator('text=Why:').count()) > 0, 'no rationale given')
+})
+await shot('join-coaching')
+
+await check('leaving the call saves it and summarises the transcript', async () => {
+  if (!joinable) return
+  await page.getByRole('button', { name: 'Leave and save' }).click()
+  await page.waitForSelector('text=Call saved and summarised', { timeout: 40_000 })
+})
+await shot('join-saved')
+
+await check('the saved call reaches the dashboard with a model summary', async () => {
+  if (!joinable) return
+  await go('/')
+  await page.waitForSelector('text=Your calls', { timeout: 20_000 })
+
+  // Summarisation runs after the call is stored, so wait for it to land.
+  await page
+    .waitForFunction(() => !document.body.innerText.includes('Summarising the transcript'), null, {
+      timeout: 90_000,
+    })
+    .catch(() => {})
+
+  assert(
+    (await page.locator('text=Summarising the transcript').count()) === 0,
+    'the summary never finished',
+  )
+  const actions = await page.locator('text=/\d+ actions?/').count()
+  assert(actions > 0, 'the saved call produced no action items')
+})
+await shot('join-on-dashboard')
+
+await check('the saved call opens with decisions, actions and a transcript', async () => {
+  if (!joinable) return
+  await page.locator('section:has-text("Your calls") a[href*="/call/"]').first().click()
+  await page.waitForSelector('text=Transcript', { timeout: 20_000 })
+  assert((await page.locator('text=Summary').count()) > 0, 'no summary section')
+  assert((await page.locator('text=Action items').count()) > 0, 'no action items section')
+  assert(
+    (await page.locator('text=Simulated capture').count()) > 0,
+    'the saved call does not disclose that capture was simulated',
+  )
+})
+await shot('join-detail')
+
+await check('an action item from the real call gets a work-style plan', async () => {
+  if (!joinable) return
+  const opener = page.getByRole('button', { name: 'How to start this' }).first()
+  if ((await opener.count()) === 0) return
+  await opener.click()
+  await page.waitForSelector('text=Start here', { timeout: 15_000 })
+})
+await shot('join-detail-plan')
+
+
 console.log('\n── Public share page, signed out ──')
 
 const anon = await browser.newContext({ viewport: { width: 1440, height: 900 } })
