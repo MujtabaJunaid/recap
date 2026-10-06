@@ -645,6 +645,57 @@ await check('an action item from the real call gets a work-style plan', async ()
 await shot('join-detail-plan')
 
 
+console.log('\n-- Ask across every meeting --')
+
+await check('the ask page offers starting questions', async () => {
+  await go('/ask')
+  await page.waitForSelector('h1:has-text("Stop guessing"), :text("needs the backend")', {
+    timeout: 15_000,
+  })
+  if ((await page.locator('text=needs the backend').count()) > 0) return
+  assert((await page.locator('text=Try one of these').count()) > 0, 'no suggested questions')
+})
+await shot('ask-empty')
+
+const askable = (await page.locator('text=Try one of these').count()) > 0
+
+await check('a grounded question gets an answer with checkable citations', async () => {
+  if (!askable) return
+  await page.getByPlaceholder('Ask anything about your meetings').fill(
+    'What did we decide about SSO and who owns telling Northwind?',
+  )
+  await page.getByRole('button', { name: 'Ask' }).click()
+
+  await page.waitForSelector('text=From', { timeout: 60_000 })
+  const citation = page.locator('a[href*="/m/"], a[href*="/call/"]').first()
+  assert((await citation.count()) > 0, 'an answer arrived with no citation to check')
+
+  // The citation has to be a real link into a meeting, not decoration.
+  const href = await citation.getAttribute('href')
+  assert(/\/(m|call)\//.test(href ?? ''), `citation does not link to a meeting: ${href}`)
+})
+await shot('ask-answered')
+
+await check('a question nothing covers is refused rather than guessed', async () => {
+  if (!askable) return
+  await page.getByPlaceholder('Ask anything about your meetings').fill(
+    'What is our total ARR and how many employees do we have?',
+  )
+  await page.getByRole('button', { name: 'Ask' }).click()
+  await page.waitForFunction(
+    () => !document.body.innerText.includes('Reading your meetings'),
+    null,
+    { timeout: 60_000 },
+  )
+  const body = await page.evaluate(() => document.body.innerText)
+  assert(
+    /not supported|was not discussed|not covered|no information|cannot find|not mentioned/i.test(body),
+    'the model answered a question nothing in the corpus supports',
+  )
+})
+await shot('ask-refusal')
+
+
 console.log('\n── Public share page, signed out ──')
 
 const anon = await browser.newContext({ viewport: { width: 1440, height: 900 } })

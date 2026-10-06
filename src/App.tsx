@@ -11,6 +11,7 @@ import { SharedClipPage } from './routes/SharedClipPage'
 import { SignIn } from './routes/SignIn'
 import { Record } from './routes/Record'
 import { JoinCall } from './routes/JoinCall'
+import { Ask } from './routes/Ask'
 import { SavedMeeting } from './routes/SavedMeeting'
 import { SessionProvider, useSession } from './state/session'
 import { WorkspaceProvider } from './state/workspace'
@@ -51,6 +52,7 @@ function WorkspaceRoutes() {
           <Route path="/" element={<Meetings />} />
           <Route path="/m/:id" element={<MeetingRoute />} />
           <Route path="/search" element={<Search />} />
+          <Route path="/ask" element={<Ask />} />
           <Route path="/join" element={<JoinCall />} />
           <Route path="/record" element={<Record />} />
           <Route path="/call/:id" element={<SavedMeeting />} />
