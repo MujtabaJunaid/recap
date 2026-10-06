@@ -6,11 +6,12 @@ on:
     paths:
       - 'server/**'
       - '.github/workflows/deploy-proxy.yml'
+  # No paths filter on pull_request. `verify` is a required check, and a required
+  # check that is path-filtered never reports on PRs that miss the filter — which
+  # blocks them forever. It runs in about 30 seconds, so always running it is cheaper
+  # than the class of bug that comes from not.
   pull_request:
     branches: [main]
-    paths:
-      - 'server/**'
-      - '.github/workflows/deploy-proxy.yml'
   workflow_dispatch:
 
 concurrency:
