@@ -241,6 +241,25 @@ try {
     assert(r.headers.get('x-frame-options') === 'DENY', 'error response missing headers')
   })
 
+  await check('preflight advertises every method the API serves', async () => {
+    const r = await fetch(`${BASE}/api/state`, {
+      method: 'OPTIONS',
+      headers: {
+        origin: ORIGIN,
+        'access-control-request-method': 'PUT',
+        'access-control-request-headers': 'content-type, authorization',
+      },
+    })
+    const allowed = (r.headers.get('access-control-allow-methods') || '')
+      .split(',')
+      .map((m) => m.trim().toUpperCase())
+    for (const method of ['GET', 'POST', 'PUT', 'OPTIONS']) {
+      assert(allowed.includes(method), `preflight omits ${method}: ${allowed.join(',')}`)
+    }
+    const headers = (r.headers.get('access-control-allow-headers') || '').toLowerCase()
+    assert(headers.includes('authorization'), 'preflight omits the authorization header')
+  })
+
   await check('CORS never echoes an unlisted origin', async () => {
     const r = await fetch(`${BASE}/health`, { headers: { origin: 'https://evil.example.com' } })
     const allow = r.headers.get('access-control-allow-origin')
