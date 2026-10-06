@@ -25,3 +25,8 @@ dist-ssr
 
 # Walkthrough output; regenerate with `npm run walkthrough`
 screenshots/
+
+# Secrets. Never commit a real .env; .env.example documents the shape.
+.env
+.env.*
+!.env.example

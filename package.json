@@ -5,13 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node scripts/check-secrets.mjs",
     "lint": "oxlint",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
     "walkthrough": "node scripts/walkthrough.mjs",
-    "check:overflow": "node scripts/check-overflow.mjs"
+    "check:overflow": "node scripts/check-overflow.mjs",
+    "check:secrets": "node scripts/check-secrets.mjs"
   },
   "dependencies": {
     "react": "^19.2.8",

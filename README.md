@@ -48,7 +48,7 @@ where the product earns its keep.
 - Workspace state. Completed action items and clips you create persist, survive a reload,
   and stay consistent across tabs.
 
-## Architecture
+## Code layout
 
 ```
 src/
@@ -105,7 +105,14 @@ documented there.
 - **CSP** is set via meta tag: `default-src 'self'`, no inline or remote script, no
   `object-src`. `frame-ancestors` and `X-Content-Type-Options` need response headers,
   which static Pages hosting cannot set — behind a server, send both.
-- No secrets in the repository; `npm audit` is clean for production dependencies.
+- **No secrets in the repository**, and a guard that keeps it that way. `.env` and
+  `.env.*` are gitignored; `.env.example` documents the rule. `npm run check:secrets`
+  scans the built bundle for credential-shaped strings and fails the build if it finds
+  one — it runs as part of `npm run build`, so CI enforces it on every push.
+  Gitignoring `.env` keeps a key out of git, not out of the browser: Vite inlines every
+  `VITE_`-prefixed variable into the public bundle. The guard checks the artefact that
+  actually ships.
+- `npm audit` is clean for production dependencies.
 
 ## How it was verified
 
@@ -128,6 +135,20 @@ Pages has no SPA rewrite, so a build plugin emits a real `index.html` for every 
 the list comes from the same seed data the router reads, so the two cannot drift. Deep
 links get a genuine 200 rather than rendering out of a 404 response, which matters for a
 shared clip link pasted anywhere that unfurls it. `404.html` stays as the fallback.
+
+## Architecture
+
+`ARCHITECTURE.md` covers the module boundaries, the resilience and observability
+primitives and where they are wired, the security model and its honest limits, the
+idempotency and consistency properties, and the four places this design breaks first as
+it scales — each with a named fix.
+
+Short version of the question people ask most: **there is no API key in this repository
+and no outbound network call of any kind.** Summaries are authored fixture content. A
+static frontend cannot hold a secret — anything the browser can read, every visitor can
+read — so live summarisation belongs behind a proxy that holds the key in its own
+environment. `ARCHITECTURE.md` describes exactly how to wire that through the existing
+repository seam.
 
 ## Agent logs
 
