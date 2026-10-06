@@ -45,9 +45,13 @@ function watch(target, label) {
     problems.push(`${label} console.error: ${m.text()}`)
   })
   target.on('pageerror', (e) => problems.push(`${label} pageerror: ${e.message}`))
-  target.on('requestfailed', (r) =>
-    problems.push(`${label} requestfailed: ${r.url()} ${r.failure()?.errorText}`),
-  )
+  target.on('requestfailed', (r) => {
+    // net::ERR_ABORTED is what an intentional AbortController cancel looks like in the
+    // network log. Counting it as a failure would mean the correct cleanup is the thing
+    // reporting a problem.
+    if (r.failure()?.errorText === 'net::ERR_ABORTED') return
+    problems.push(`${label} requestfailed: ${r.url()} ${r.failure()?.errorText}`)
+  })
 }
 watch(page, 'app')
 
@@ -129,13 +133,46 @@ await check('the demo account signs in', async () => {
   await page.fill('#email', DEMO_EMAIL)
   await page.fill('#password', DEMO_PASSWORD)
   await page.getByRole('button', { name: 'Continue' }).click()
-  await page.waitForSelector('h1:has-text("Meetings")', { timeout: 20_000 })
+  // A fresh account lands on the first-run state; a populated one on the list. Either
+  // means sign-in worked.
+  await page.waitForSelector('h1:has-text("Meetings"), :text("Welcome,")', { timeout: 20_000 })
+  assert(!page.url().includes('/signin'), 'still on the sign-in page')
 })
 await shot('meetings-list')
 
-await check('session survives a reload', async () => {
+await check('a signed-in account starts on an empty workspace, not someone else data', async () => {
+  await page.waitForSelector('text=Welcome,', { timeout: 15_000 })
+  const cards = await page.locator('article').count()
+  assert(cards === 0, `a fresh account showed ${cards} meetings`)
+  assert(
+    (await page.locator('text=Load the sample workspace').count()) > 0,
+    'no way offered to populate the workspace',
+  )
+})
+
+await check('the empty state survives a reload', async () => {
   await page.reload({ waitUntil: 'networkidle' })
-  await page.waitForSelector('h1:has-text("Meetings")', { timeout: 10_000 })
+  await page.waitForSelector('text=Welcome,', { timeout: 15_000 })
+})
+
+await check('action items and highlights have their own first-run states', async () => {
+  await go('/actions')
+  await page.waitForSelector('text=No action items yet', { timeout: 10_000 })
+  await go('/highlights')
+  await page.waitForSelector('text=No highlights yet', { timeout: 10_000 })
+  await go('/')
+})
+
+await check('loading the sample populates the workspace', async () => {
+  await page.getByRole('button', { name: 'Load the sample workspace' }).click()
+  await page.waitForSelector('h1:has-text("Meetings")', { timeout: 15_000 })
+  const cards = await page.locator('article').count()
+  assert(cards >= 8, `expected at least 8 meetings after loading, saw ${cards}`)
+})
+
+await check('the loaded sample survives a reload', async () => {
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('h1:has-text("Meetings")', { timeout: 15_000 })
 })
 
 console.log('\n── Meetings list ──')
@@ -425,7 +462,13 @@ await check('no horizontal overflow on any route at 390px', async () => {
   await mobilePage.fill('#email', DEMO_EMAIL)
   await mobilePage.fill('#password', DEMO_PASSWORD)
   await mobilePage.getByRole('button', { name: 'Continue' }).click()
-  await mobilePage.waitForTimeout(800)
+  await mobilePage.waitForTimeout(1200)
+  // The mobile context is a fresh browser, so it lands on the first-run state.
+  const load = mobilePage.getByRole('button', { name: 'Load the sample workspace' })
+  if ((await load.count()) > 0) {
+    await load.click()
+    await mobilePage.waitForTimeout(800)
+  }
 
   for (const path of ['/', '/m/q3-roadmap-review', '/actions', '/highlights', '/share/ck-7f2a91']) {
     await mobilePage.goto(`${base}${path}`, { waitUntil: 'networkidle' })

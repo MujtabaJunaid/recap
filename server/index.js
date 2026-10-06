@@ -294,6 +294,39 @@ const SCHEMA = {
 
 const STYLES = new Set(['momentum', 'precise', 'steady', 'deep', 'collaborative'])
 
+/**
+ * Repeated inline in the user message. Naming the style alone left the model to recall
+ * its rule from the middle of a long system prompt, and it averaged across them —
+ * switching style produced a near-identical plan, which defeats the whole feature.
+ */
+const STYLE_RULES = {
+  momentum: [
+    'The reader cannot start. Your FIRST STEP must take under two minutes, require no',
+    'decision, and name one physical action (open this, type that). Put a timer in the',
+    'steps. Say explicitly that a bad first version is fine. Do not plan the whole task.',
+  ].join(' '),
+  precise: [
+    'The reader cannot stop. Your FIRST STEP must be to write down what "done" means',
+    'before any work starts. Include an explicit out-of-scope list and a stop condition.',
+    'Never suggest polishing or reviewing again.',
+  ].join(' '),
+  steady: [
+    'The reader is overwhelmed. Give exactly one action at a time and say to finish it',
+    'before reading on. Calm register. No urgency words, no exclamation marks, no',
+    'deadlines framed as pressure. End by permitting them to stop for the day.',
+  ].join(' '),
+  deep: [
+    'The reader loses more to context switching than to the work. Your FIRST STEP must',
+    'be to book one uninterrupted block and gather every input before starting. Say to',
+    'turn notifications off. Suggest batching adjacent work into the same block.',
+  ].join(' '),
+  collaborative: [
+    'The reader is stuck on a blank page. Your FIRST STEP must be to contact one named',
+    'person and say what to open the conversation with. Everything else follows from',
+    'that conversation.',
+  ].join(' '),
+}
+
 // ---------------------------------------------------------------------------
 // Validation. Everything from the network is untrusted, in both directions.
 // ---------------------------------------------------------------------------
@@ -375,6 +408,7 @@ async function callModel(body, correlationId) {
         `OWNER: ${body.ownerName || 'unassigned'}`,
         `DUE: ${body.due || 'no date agreed'}`,
         `WORK STYLE: ${body.style}`,
+        `STYLE REQUIREMENT (binding for this request): ${STYLE_RULES[body.style]}`,
         '',
         'TRANSCRIPT EXCERPT (the only context you may use):',
         body.transcriptExcerpt,

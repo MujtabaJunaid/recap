@@ -3,8 +3,10 @@ import { MEETINGS, SHARED_CLIPS } from '../data'
 import { person } from '../data/people'
 import { Avatar, Icon, ICONS, Pill } from '../components/primitives'
 import { relativeDay, timecode } from '../lib/format'
+import { useWorkspace } from '../state/workspace'
 
 export function HighlightsFeed() {
+  const { hasMeetings } = useWorkspace()
   const rows = MEETINGS.flatMap((meeting) =>
     meeting.highlights.map((highlight) => ({
       meeting,
@@ -14,6 +16,24 @@ export function HighlightsFeed() {
       ),
     })),
   )
+
+  if (!hasMeetings) {
+    return (
+      <div className="mx-auto max-w-2xl px-4 py-16 text-center md:px-6">
+        <h1 className="text-xl font-semibold tracking-tight text-white">No highlights yet</h1>
+        <p className="mx-auto mt-2 max-w-md text-[13px] leading-relaxed text-ink-400">
+          Clip a moment during or after a call and it appears here, ready to share with
+          someone who was not on it.
+        </p>
+        <Link
+          to="/"
+          className="mt-5 inline-flex items-center gap-1.5 rounded-lg border border-ink-700 px-3.5 py-2 text-[13px] text-ink-200 transition-colors hover:border-ink-600 hover:text-white"
+        >
+          Back to meetings
+        </Link>
+      </div>
+    )
+  }
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-7 md:px-6">
