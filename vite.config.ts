@@ -4,6 +4,7 @@ import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { MEETINGS, SHARED_CLIPS } from './src/data'
+import { STATIC_ROUTES } from './src/routes/manifest'
 
 // GitHub Pages serves project sites under /<repo>/. GITHUB_REPOSITORY is set by Actions,
 // so the deployed base resolves itself and local builds stay at the root.
@@ -17,9 +18,7 @@ const repo = process.env.GITHUB_REPOSITORY?.split('/')[1]
  */
 function staticRoutes(): Plugin {
   const routes = [
-    'actions',
-    'highlights',
-    'search',
+    ...STATIC_ROUTES,
     ...MEETINGS.map((m) => `m/${m.id}`),
     ...SHARED_CLIPS.map((c) => `share/${c.id}`),
   ]
