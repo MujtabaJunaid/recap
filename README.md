@@ -63,8 +63,15 @@ speaking-share signal, not diarisation output, and the UI says so where it is sh
 
 Static build to GitHub Pages via Actions. `vite.config.ts` derives its base path from
 `GITHUB_REPOSITORY`, so local builds serve from `/` and the deployed site from `/recap/`
-with no configuration to keep in sync. The workflow typechecks before it builds and
-copies `index.html` to `404.html` so deep links survive a hard refresh.
+with no configuration to keep in sync.
+
+Pages has no SPA rewrite, so a build plugin emits a real `index.html` for every route —
+the list comes from the same seed data the router reads, so the two cannot drift. Deep
+links get a genuine 200 rather than rendering out of a 404 response, which matters for a
+shared clip link pasted anywhere that unfurls it. `404.html` stays as the fallback for
+unrecognised paths.
+
+CI runs `npm run lint` and `npm run build`, the same two commands available locally.
 
 ## Agent logs
 

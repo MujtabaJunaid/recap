@@ -110,3 +110,36 @@ a real render would not have been caught by any check that was run.
 
 That is the single biggest gap in this delivery, and it is a consequence of the
 environment rather than a choice about where to spend time.
+
+---
+
+## Post-review: two things found after the first deploy
+
+### Deep links were served out of a 404 response
+
+The first deploy worked, but only through the `404.html` fallback: every route other than
+`/` returned HTTP 404 with the app inside it. Browsers render it fine, which is why this
+is easy to ship without noticing. A shared clip link that returns 404 fails to unfurl
+wherever it gets pasted, and the share page is the whole point of the share feature.
+
+Every route is known at build time, so a Vite plugin now emits a real `index.html` per
+route. The route list is built from the same `MEETINGS` and `SHARED_CLIPS` the router
+reads, so there is no second list to keep in sync. 14 routes plus the fallback.
+
+### The CI build then failed, and the reason is a process finding
+
+`npm run build` runs `tsc -b`, which typechecks `vite.config.ts` under
+`tsconfig.node.json`. That project was set to `module: nodenext`, so the moment the config
+imported app source, Node's ESM resolver rules applied to the entire imported graph and
+demanded explicit `.js` extensions on files written for a bundler.
+
+The fix was to set the config project to `module: preserve`. Vite bundles
+`vite.config.ts` with esbuild rather than handing it to Node's resolver, so bundler
+resolution is the accurate model for that file; `nodenext` was describing a loader that
+never runs.
+
+The more useful finding is why it reached CI at all. Local verification had been
+`tsc --noEmit -p tsconfig.app.json` plus `npx vite build` — neither of which typechecks
+the config project. **CI was running a command that could not be run locally.** The
+workflow now runs `npm run lint` and `npm run build` and nothing else, so the commands a
+developer has are the commands the gate uses.
