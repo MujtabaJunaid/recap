@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { useSession } from '../state/session'
 import { MEETINGS } from '../data'
 import { person } from '../data/people'
 import { AvatarStack, Icon, ICONS, PlatformTag, Pill } from '../components/primitives'
@@ -10,6 +11,8 @@ const TEAMS = ['All', 'Product', 'Sales', 'Customer Success', 'Engineering', 'De
 
 export function Meetings() {
   const [team, setTeam] = useState('All')
+  const [noticeOpen, setNoticeOpen] = useState(true)
+  const { email } = useSession()
 
   const visible = useMemo(
     () => (team === 'All' ? MEETINGS : MEETINGS.filter((m) => m.team === team)),
@@ -40,6 +43,31 @@ export function Meetings() {
           Review action items
         </Link>
       </div>
+
+      {noticeOpen && (
+        <div className="mt-4 flex flex-wrap items-start justify-between gap-3 rounded-xl border border-brand-500/20 bg-brand-500/5 p-3.5">
+          <div className="min-w-0">
+            <p className="text-[13px] font-medium text-ink-100">
+              You are in a shared demo workspace, not an empty new account
+            </p>
+            <p className="mt-1 max-w-3xl text-[12px] leading-relaxed text-ink-400">
+              Signing in as{' '}
+              <span className="text-ink-300">{email ?? 'a guest'}</span> drops you into
+              Northbeam&rsquo;s workspace with eight real meetings already in it, because an
+              empty list would show you nothing about what this does. Everything you change
+              — completing an action, clipping a moment, choosing a work style — is yours and
+              stays in this browser. There is one shared password and one workspace; per-user
+              accounts would need a database this build does not have.
+            </p>
+          </div>
+          <button
+            onClick={() => setNoticeOpen(false)}
+            className="shrink-0 rounded-md px-2 py-1 text-[11px] text-ink-400 transition-colors hover:bg-ink-800 hover:text-ink-200"
+          >
+            Got it
+          </button>
+        </div>
+      )}
 
       <div className="mt-5 flex flex-wrap gap-1.5">
         {TEAMS.map((t) => (

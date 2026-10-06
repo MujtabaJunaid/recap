@@ -15,6 +15,7 @@
  *   PASSWORD_HASH    required. scrypt verifier as `salt:derivedKey`, both hex.
  *                    The plaintext password is never stored anywhere, here or in config.
  *   ALLOWED_ORIGINS  comma-separated. Defaults to the GitHub Pages origin.
+ *   RATE_LIMIT_PER_SEC / RATE_LIMIT_BURST  optional per-IP token bucket tuning.
  *   MODEL            optional override.
  *   PORT             supplied by the platform.
  */
@@ -32,6 +33,14 @@ const ALLOWED_ORIGINS = (
   .split(',')
   .map((o) => o.trim())
   .filter(Boolean)
+
+/**
+ * How many proxies sit in front of this process. Heroku's router is one, and it
+ * overwrites x-forwarded-for rather than appending, but the code must not depend on
+ * that: behind a proxy that appends, the leftmost value is attacker-controlled and
+ * trusting it makes the rate limiter trivially bypassable.
+ */
+const TRUSTED_PROXY_HOPS = Number(process.env.TRUSTED_PROXY_HOPS || 1)
 
 const AUTH_SECRET = process.env.AUTH_SECRET
 const PASSWORD_HASH = process.env.PASSWORD_HASH
@@ -141,8 +150,60 @@ function log(level, event, fields = {}) {
 // cheap version.
 // ---------------------------------------------------------------------------
 
-const BUCKET_RATE_PER_SEC = 0.5
-const BUCKET_BURST = 5
+const BUCKET_RATE_PER_SEC = Number(process.env.RATE_LIMIT_PER_SEC || 0.5)
+const BUCKET_BURST = Number(process.env.RATE_LIMIT_BURST || 5)
+
+/** Failed logins get their own, much tighter budget than general traffic. */
+const LOGIN_FAIL_WINDOW_MS = 15 * 60_000
+const LOGIN_FAIL_LIMIT = 10
+const loginFailures = new Map()
+
+function recordLoginFailure(ip) {
+  const now = Date.now()
+  const entry = loginFailures.get(ip)
+  if (!entry || now - entry.since > LOGIN_FAIL_WINDOW_MS) {
+    loginFailures.set(ip, { count: 1, since: now })
+    return
+  }
+  entry.count += 1
+}
+
+function loginLockedOut(ip) {
+  const entry = loginFailures.get(ip)
+  if (!entry) return 0
+  if (Date.now() - entry.since > LOGIN_FAIL_WINDOW_MS) {
+    loginFailures.delete(ip)
+    return 0
+  }
+  if (entry.count < LOGIN_FAIL_LIMIT) return 0
+  return LOGIN_FAIL_WINDOW_MS - (Date.now() - entry.since)
+}
+
+function clearLoginFailures(ip) {
+  loginFailures.delete(ip)
+}
+
+/**
+ * Takes the IP the trusted proxy layer actually observed, counting in from the right.
+ * Anything further left was supplied by the client and must not be believed.
+ */
+function clientIp(req) {
+  // Zero trusted hops means this process is directly reachable, so x-forwarded-for is
+  // entirely client-supplied and must be ignored outright.
+  if (TRUSTED_PROXY_HOPS <= 0) return req.socket.remoteAddress || 'unknown'
+
+  const chain = String(req.headers['x-forwarded-for'] || '')
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean)
+  if (chain.length === 0) return req.socket.remoteAddress || 'unknown'
+
+  // Count in from the right: only the entries the trusted proxies appended are
+  // believable. Anything further left was supplied by the client.
+  const index = chain.length - TRUSTED_PROXY_HOPS
+  if (index < 0) return req.socket.remoteAddress || 'unknown'
+  return chain[index] || chain[chain.length - 1]
+}
 const buckets = new Map()
 
 function takeToken(ip) {
@@ -166,6 +227,8 @@ function takeToken(ip) {
 setInterval(() => {
   const cutoff = Date.now() - 10 * 60_000
   for (const [ip, bucket] of buckets) if (bucket.last < cutoff) buckets.delete(ip)
+  const failCutoff = Date.now() - LOGIN_FAIL_WINDOW_MS
+  for (const [ip, entry] of loginFailures) if (entry.since < failCutoff) loginFailures.delete(ip)
 }, 60_000).unref()
 
 // ---------------------------------------------------------------------------
@@ -383,12 +446,27 @@ function corsHeaders(origin) {
   }
 }
 
+/**
+ * Applied to every response including errors and preflights, so there is no path that
+ * can forget them. This is an API that only ever returns JSON, so the CSP is maximally
+ * restrictive: nothing should ever be loaded or framed from one of these responses.
+ */
+const SECURITY_HEADERS = {
+  'x-content-type-options': 'nosniff',
+  'strict-transport-security': 'max-age=31536000; includeSubDomains',
+  'x-frame-options': 'DENY',
+  'referrer-policy': 'no-referrer',
+  'content-security-policy': "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+  'cross-origin-resource-policy': 'same-site',
+  'permissions-policy': 'camera=(), microphone=(), geolocation=(), interest-cohort=()',
+  'cache-control': 'no-store',
+}
+
 function send(res, status, body, extra = {}) {
   const payload = JSON.stringify(body)
   res.writeHead(status, {
-    'content-type': 'application/json',
-    'x-content-type-options': 'nosniff',
-    'cache-control': 'no-store',
+    'content-type': 'application/json; charset=utf-8',
+    ...SECURITY_HEADERS,
     ...extra,
   })
   res.end(payload)
@@ -436,7 +514,7 @@ const server = createServer(async (req, res) => {
   const correlationId = randomUUID().slice(0, 8)
 
   if (req.method === 'OPTIONS') {
-    res.writeHead(204, cors)
+    res.writeHead(204, { ...SECURITY_HEADERS, ...cors })
     res.end()
     return
   }
@@ -476,13 +554,7 @@ const server = createServer(async (req, res) => {
     return
   }
 
-  if (!API_KEY) {
-    log('error', 'config.missing_key', { correlationId })
-    send(res, 503, { error: 'service not configured' }, cors)
-    return
-  }
-
-  const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress
+  const ip = clientIp(req)
   const retryAfterMs = takeToken(ip)
   if (retryAfterMs > 0) {
     send(res, 429, { error: 'rate limited', retryAfterMs }, {
@@ -494,6 +566,16 @@ const server = createServer(async (req, res) => {
 
   // ---- Login ----------------------------------------------------------------
   if (isLogin) {
+    const lockout = loginLockedOut(ip)
+    if (lockout > 0) {
+      log('warn', 'auth.locked_out', { correlationId })
+      send(res, 429, { error: 'too many failed attempts', retryAfterMs: lockout }, {
+        ...cors,
+        'retry-after': String(Math.ceil(lockout / 1000)),
+      })
+      return
+    }
+
     try {
       const body = await readBody(req)
       const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : ''
@@ -505,10 +587,13 @@ const server = createServer(async (req, res) => {
       if (!passwordMatches(body?.password)) {
         // Same message and shape for a bad email as a bad password, so the endpoint
         // cannot be used to discover which addresses exist.
+        recordLoginFailure(ip)
         log('warn', 'auth.rejected', { correlationId, subject: subjectDigest(email) })
         send(res, 401, { error: 'email or password is incorrect' }, cors)
         return
       }
+
+      clearLoginFailures(ip)
 
       const exp = Math.floor(Date.now() / 1000) + TOKEN_TTL_SEC
       const token = sign({ sub: email, exp })
@@ -530,12 +615,22 @@ const server = createServer(async (req, res) => {
     return
   }
 
+
   const started = Date.now()
   try {
     const body = await readBody(req)
     const errors = validateRequest(body)
     if (errors.length > 0) {
       send(res, 400, { error: 'invalid request', details: errors }, cors)
+      return
+    }
+
+    // After validation, so a malformed request gets the accurate reason rather than
+    // being told the service is down. Only generation needs the provider key; a
+    // rotated or missing one must not take authentication down with it.
+    if (!API_KEY) {
+      log('error', 'config.missing_key', { correlationId })
+      send(res, 503, { error: 'generation is unavailable' }, cors)
       return
     }
 

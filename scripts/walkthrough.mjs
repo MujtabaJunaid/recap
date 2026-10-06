@@ -27,6 +27,9 @@ let step = 0
  */
 let expecting404 = false
 
+/** Set while a check deliberately sends bad credentials, which really is a 401. */
+let expecting401 = false
+
 const browser = await chromium.launch({ channel: 'chromium' })
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
 const page = await context.newPage()
@@ -35,6 +38,7 @@ function watch(target, label) {
   target.on('console', (m) => {
     if (m.type() !== 'error') return
     if (expecting404 && m.text().includes('404')) return
+    if (expecting401 && m.text().includes('401')) return
     problems.push(`${label} console.error: ${m.text()}`)
   })
   target.on('pageerror', (e) => problems.push(`${label} pageerror: ${e.message}`))
@@ -94,12 +98,17 @@ await check('a missing password is rejected', async () => {
 })
 
 await check('a wrong password is rejected and the field is cleared', async () => {
-  await page.fill('#email', 'someone.else@example.com')
-  await page.fill('#password', 'definitely-not-it')
-  await page.getByRole('button', { name: 'Continue' }).click()
-  await page.waitForSelector('#signin-error', { timeout: 10_000 })
-  assert(page.url().includes('/signin'), 'should not have navigated')
-  assert((await page.inputValue('#password')) === '', 'password field was not cleared')
+  expecting401 = true
+  try {
+    await page.fill('#email', 'someone.else@example.com')
+    await page.fill('#password', 'definitely-not-it')
+    await page.getByRole('button', { name: 'Continue' }).click()
+    await page.waitForSelector('#signin-error', { timeout: 15_000 })
+    assert(page.url().includes('/signin'), 'should not have navigated')
+    assert((await page.inputValue('#password')) === '', 'password field was not cleared')
+  } finally {
+    expecting401 = false
+  }
 })
 
 await check('the password is never written to storage', async () => {
@@ -231,19 +240,29 @@ await shot('action-ticked')
 
 await check('a generated plan opens and names its own provenance', async () => {
   await page.getByRole('button', { name: 'How to start this' }).first().click()
-  await page.waitForTimeout(300)
+  // The hosted planner is a network round trip; wait for content, not a guessed delay.
+  await page.waitForSelector('text=Start here', { timeout: 30_000 })
   const body = await page.locator('text=Nobody said these steps out loud').count()
   assert(body > 0, 'plan did not disclose that it was generated')
-  const start = await page.locator('text=Start here').count()
-  assert(start > 0, 'plan missing its first step')
 })
 await shot('action-plan')
 
 await check('changing work style changes the plan', async () => {
-  const before = await page.locator('ol li').first().textContent()
+  const first = page.locator('ol li').first()
+  const before = (await first.textContent()) ?? ''
   await page.getByLabel('How you work best').selectOption('deep')
-  await page.waitForTimeout(350)
-  const after = await page.locator('ol li').first().textContent()
+  // Poll until the text actually changes rather than sampling once mid-flight.
+  await page
+    .waitForFunction(
+      (prev) => {
+        const li = document.querySelector('ol li')
+        return li !== null && li.textContent !== prev
+      },
+      before,
+      { timeout: 30_000 },
+    )
+    .catch(() => {})
+  const after = (await first.textContent()) ?? ''
   assert(before !== after, `plan did not adapt to the style: "${before}" vs "${after}"`)
 })
 await shot('action-plan-deep')
