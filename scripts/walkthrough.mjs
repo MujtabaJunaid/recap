@@ -19,13 +19,23 @@ const problems = []
 const results = []
 let step = 0
 
+/**
+ * Set while a check deliberately requests a URL that does not exist. Static hosting has
+ * no SPA rewrite, so an unknown route is served from 404.html with a 404 status: the app
+ * renders correctly and the browser still logs the document status. That is expected,
+ * and counting it as a failure would train us to ignore the real ones.
+ */
+let expecting404 = false
+
 const browser = await chromium.launch({ channel: 'chromium' })
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
 const page = await context.newPage()
 
 function watch(target, label) {
   target.on('console', (m) => {
-    if (m.type() === 'error') problems.push(`${label} console.error: ${m.text()}`)
+    if (m.type() !== 'error') return
+    if (expecting404 && m.text().includes('404')) return
+    problems.push(`${label} console.error: ${m.text()}`)
   })
   target.on('pageerror', (e) => problems.push(`${label} pageerror: ${e.message}`))
   target.on('requestfailed', (r) =>
@@ -339,12 +349,17 @@ await check('the share page exposes only the clip, not the whole meeting', async
 })
 
 await check('an unknown clip id shows a clean message, not a crash', async () => {
-  await anonPage.goto(`${base}/share/ck-doesnotexist`, { waitUntil: 'networkidle' })
-  await anonPage.waitForTimeout(300)
-  assert(
-    (await anonPage.locator('text=no longer available').count()) > 0,
-    'missing clip did not render its empty state',
-  )
+  expecting404 = true
+  try {
+    await anonPage.goto(`${base}/share/ck-doesnotexist`, { waitUntil: 'networkidle' })
+    await anonPage.waitForTimeout(300)
+    assert(
+      (await anonPage.locator('text=no longer available').count()) > 0,
+      'missing clip did not render its empty state',
+    )
+  } finally {
+    expecting404 = false
+  }
 })
 
 console.log('\n── Responsive ──')
