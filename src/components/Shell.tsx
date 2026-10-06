@@ -3,6 +3,7 @@ import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { Icon, ICONS } from './primitives'
 import { avatarColor } from '../data/people'
 import { useSession } from '../state/session'
+import { useWorkspace } from '../state/workspace'
 import { MEETINGS } from '../data'
 import { relativeDay } from '../lib/format'
 
@@ -32,6 +33,7 @@ function identityFrom(email: string | null) {
 export function Shell({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate()
   const { email, signOut } = useSession()
+  const { hasMeetings } = useWorkspace()
   const me = identityFrom(email)
   const initial = useQueryParam('q')
   const [query, setQuery] = useState(initial)
@@ -63,7 +65,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     navigate(trimmed ? `/search?q=${encodeURIComponent(trimmed)}` : '/')
   }
 
-  const upcoming = MEETINGS.filter((m) => m.status === 'processing')
+  const upcoming = hasMeetings ? MEETINGS.filter((m) => m.status === 'processing') : []
 
   return (
     <div className="flex min-h-full">
@@ -95,7 +97,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           ))}
         </nav>
 
-        <div className="mt-7 px-2.5">
+        <div className={`mt-7 px-2.5 ${hasMeetings ? '' : 'hidden'}`}>
           <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-400">Recent</p>
           <div className="mt-2 space-y-0.5">
             {MEETINGS.filter((m) => m.status === 'ready')

@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useSession } from '../state/session'
+import { useWorkspace } from '../state/workspace'
+import { EmptyWorkspace } from './EmptyWorkspace'
 import { MEETINGS } from '../data'
 import { person } from '../data/people'
 import { AvatarStack, Icon, ICONS, PlatformTag, Pill } from '../components/primitives'
@@ -13,6 +15,7 @@ export function Meetings() {
   const [team, setTeam] = useState('All')
   const [noticeOpen, setNoticeOpen] = useState(true)
   const { email } = useSession()
+  const { hasMeetings, clearWorkspace } = useWorkspace()
 
   const visible = useMemo(
     () => (team === 'All' ? MEETINGS : MEETINGS.filter((m) => m.team === team)),
@@ -25,6 +28,10 @@ export function Meetings() {
     const open = ready.flatMap((m) => m.actionItems).filter((a) => !a.done).length
     return { count: ready.length, hours: Math.round(seconds / 360) / 10, open }
   }, [])
+
+  // A new account has recorded nothing. Showing someone else's meetings there would be
+  // both confusing and untrue.
+  if (!hasMeetings) return <EmptyWorkspace />
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-7 md:px-6">
@@ -48,24 +55,30 @@ export function Meetings() {
         <div className="mt-4 flex flex-wrap items-start justify-between gap-3 rounded-xl border border-brand-500/20 bg-brand-500/5 p-3.5">
           <div className="min-w-0">
             <p className="text-[13px] font-medium text-ink-100">
-              You are in a shared demo workspace, not an empty new account
+              This is the sample workspace, loaded into your account
             </p>
             <p className="mt-1 max-w-3xl text-[12px] leading-relaxed text-ink-400">
-              Signing in as{' '}
-              <span className="text-ink-300">{email ?? 'a guest'}</span> drops you into
-              Northbeam&rsquo;s workspace with eight real meetings already in it, because an
-              empty list would show you nothing about what this does. Everything you change
-              — completing an action, clipping a moment, choosing a work style — is yours and
-              stays in this browser. There is one shared password and one workspace; per-user
-              accounts would need a database this build does not have.
+              Eight meetings from a fictional company, so{' '}
+              <span className="text-ink-300">{email ?? 'you'}</span> can see what this does
+              without waiting for a real call. Everything you change
+              — completing an action, clipping a moment, choosing a work style — is saved to
+              your account and nobody else&rsquo;s.
             </p>
           </div>
-          <button
-            onClick={() => setNoticeOpen(false)}
-            className="shrink-0 rounded-md px-2 py-1 text-[11px] text-ink-400 transition-colors hover:bg-ink-800 hover:text-ink-200"
-          >
-            Got it
-          </button>
+          <div className="flex shrink-0 items-center gap-1">
+            <button
+              onClick={clearWorkspace}
+              className="rounded-md px-2 py-1 text-[11px] text-ink-400 transition-colors hover:bg-ink-800 hover:text-ink-200"
+            >
+              Clear it
+            </button>
+            <button
+              onClick={() => setNoticeOpen(false)}
+              className="rounded-md px-2 py-1 text-[11px] text-ink-400 transition-colors hover:bg-ink-800 hover:text-ink-200"
+            >
+              Got it
+            </button>
+          </div>
         </div>
       )}
 

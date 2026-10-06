@@ -38,15 +38,28 @@ interface WorkspaceState {
   clips: Record<string, LocalClip>
   /** Self-selected, never inferred. See lib/coaching.ts. */
   workStyle: WorkStyleId
+  /**
+   * Whether this account has any meetings. A new account has recorded nothing, so the
+   * honest state is empty; the seeded library is opt-in rather than something another
+   * person's meetings get dropped into your workspace.
+   */
+  hasMeetings: boolean
 }
 
-const EMPTY: WorkspaceState = { actions: {}, clips: {}, workStyle: DEFAULT_WORK_STYLE }
+const EMPTY: WorkspaceState = {
+  actions: {},
+  clips: {},
+  workStyle: DEFAULT_WORK_STYLE,
+  hasMeetings: false,
+}
 
 type Action =
   | { type: 'action/set'; key: string; done: boolean }
   | { type: 'clip/add'; clip: LocalClip }
   | { type: 'clip/remove'; id: string }
   | { type: 'style/set'; style: WorkStyleId }
+  | { type: 'sample/load' }
+  | { type: 'sample/clear' }
   | { type: 'state/replace'; state: WorkspaceState }
 
 function reducer(state: WorkspaceState, action: Action): WorkspaceState {
@@ -70,6 +83,12 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
       if (state.workStyle === action.style) return state
       return { ...state, workStyle: action.style }
     }
+    case 'sample/load':
+      return state.hasMeetings ? state : { ...state, hasMeetings: true }
+    case 'sample/clear':
+      // Clearing takes the derived state with it; leaving completions behind would
+      // resurrect them the next time the sample is loaded.
+      return { ...EMPTY, workStyle: state.workStyle }
     case 'state/replace':
       return action.state
   }
@@ -85,6 +104,7 @@ function hydrate(raw: unknown): WorkspaceState {
       value?.workStyle && styles.includes(value.workStyle)
         ? value.workStyle
         : DEFAULT_WORK_STYLE,
+    hasMeetings: value?.hasMeetings === true,
   }
 }
 
@@ -96,6 +116,9 @@ interface WorkspaceApi {
   removeClip: (id: string) => void
   workStyle: WorkStyleId
   setWorkStyle: (style: WorkStyleId) => void
+  hasMeetings: boolean
+  loadSampleWorkspace: () => void
+  clearWorkspace: () => void
   reset: () => void
 }
 
@@ -207,6 +230,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       removeClip: (id) => dispatch({ type: 'clip/remove', id }),
       workStyle: state.workStyle,
       setWorkStyle: (style) => dispatch({ type: 'style/set', style }),
+      hasMeetings: state.hasMeetings,
+      loadSampleWorkspace: () => dispatch({ type: 'sample/load' }),
+      clearWorkspace: () => dispatch({ type: 'sample/clear' }),
       reset: () => dispatch({ type: 'state/replace', state: EMPTY }),
     }),
     [state],

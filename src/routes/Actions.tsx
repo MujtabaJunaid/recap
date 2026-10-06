@@ -19,7 +19,7 @@ const UNDATED = '9999-99-99'
 export function Actions() {
   const [owner, setOwner] = useState('all')
   const [showDone, setShowDone] = useState(false)
-  const { isActionDone, setActionDone } = useWorkspace()
+  const { isActionDone, setActionDone, hasMeetings } = useWorkspace()
   const { can } = useSession()
   const editable = can('workspace:write')
 
@@ -49,6 +49,24 @@ export function Actions() {
   const overdueCount = rows.filter(
     (r) => !done(r) && r.item.due && isOverdue(r.item.due, now),
   ).length
+
+  if (!hasMeetings) {
+    return (
+      <div className="mx-auto max-w-2xl px-4 py-16 text-center md:px-6">
+        <h1 className="text-xl font-semibold tracking-tight text-white">No action items yet</h1>
+        <p className="mx-auto mt-2 max-w-md text-[13px] leading-relaxed text-ink-400">
+          Commitments people make out loud land here after your first recorded meeting,
+          each linked to the second it was said.
+        </p>
+        <Link
+          to="/"
+          className="mt-5 inline-flex items-center gap-1.5 rounded-lg border border-ink-700 px-3.5 py-2 text-[13px] text-ink-200 transition-colors hover:border-ink-600 hover:text-white"
+        >
+          Back to meetings
+        </Link>
+      </div>
+    )
+  }
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-7 md:px-6">
