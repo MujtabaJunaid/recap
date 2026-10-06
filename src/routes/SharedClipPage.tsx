@@ -58,7 +58,7 @@ export function SharedClipPage() {
         <p className="flex flex-wrap items-center gap-2 text-[13px] text-ink-400">
           <Avatar id={clip.sharedBy} size="xs" />
           <span className="text-ink-200">{person(clip.sharedBy).name}</span>
-          shared a {Math.round(duration)}-second clip with {clip.sharedWith}
+          shared {Math.round(duration)} seconds of {meeting.title} with {clip.sharedWith}
         </p>
 
         {clip.note && (

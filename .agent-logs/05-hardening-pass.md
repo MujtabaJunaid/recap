@@ -149,3 +149,91 @@ seed value and to check isolation in both directions, which is what it should ha
 - The three lint warnings triaged in `04` remain triaged.
 - The walkthrough asserts that pages render and do not error. It does not assert pixel
   layout, so a visual regression could still slip through between screenshot reviews.
+
+---
+
+## Third pass: architecture, resilience, observability, secret hygiene
+
+### A data-access seam instead of scattered policy
+
+`src/data/repository.ts` is now the only thing that knows where meetings come from.
+`MeetingRepository` is the interface the UI would talk to; `MeetingSource` is the
+transport. Swapping `FixtureSource` for an HTTP source changes one file and no caller.
+
+The resilience policy lives at that seam rather than at each call site, so it cannot be
+applied inconsistently: de-duplicate by key, fail fast if the breaker is open, bound each
+attempt with a timeout, retry transient faults with jittered backoff, emit one structured
+span.
+
+### Resilience primitives, and the bug testing them found
+
+`lib/resilience.ts` has timeout-with-abort, bounded retry with **full jitter**
+(`[0, min(max, base·2ⁿ)]` — equal-width backoff resynchronises failed clients into a
+second herd), a circuit breaker with closed/open/half-open and single-probe admission,
+and an idempotency cache that collapses concurrent duplicate work without caching
+failures.
+
+Writing the breaker tests surfaced a real bug in the breaker: `openedAt` was set only
+when `failures === threshold`, so a **failed half-open probe** incremented past the
+threshold without re-arming the window, leaving the circuit permanently half-open and
+admitting a probe on every call. Now any failure at or above the threshold re-arms it.
+That is a bug which would only ever appear during an outage — the worst time to find it.
+
+Honest note: with a fixture source nothing fails, so the breaker never opens today. It
+exists so that the behaviour is already correct when the source is a network.
+
+### Observability
+
+`lib/observability.ts` emits JSON records carrying a correlation id that `child()`
+inherits, so one user action keeps one id across everything it fans out into. `span()`
+times an operation and emits one record with its outcome either way.
+
+The part that matters for this product: **every field passes through redaction, and
+denylisted keys are dropped outright.** A logger is the easiest place to leak a
+transcript by accident, so the protection sits in the logger rather than relying on
+every call site to remember. Tested directly.
+
+Distributed tracing is not implemented and claiming it would be false — there is one
+process and no hop to trace. The correlation id is the part that carries forward.
+
+### Secret hygiene, and the trap in the obvious answer
+
+`.env` and `.env.*` are gitignored with a committed `.env.example`. That is necessary
+and not sufficient, which is the point worth recording: **Vite inlines every
+`VITE_`-prefixed variable into the built JavaScript.** Gitignoring `.env` keeps a key out
+of git and does nothing to keep it out of the browser. A `VITE_`-prefixed key is public
+the moment it builds.
+
+So the guard checks the artefact that actually ships. `scripts/check-secrets.mjs` scans
+`dist/` for Groq, OpenAI, Anthropic, Google, GitHub, Slack and AWS key shapes plus
+private-key blocks, and fails the build. It runs inside `npm run build`, so CI enforces
+it on every push. It was negative-tested by planting a fake key in `dist/` and confirming
+a non-zero exit, because a security check that has never failed is not known to work.
+
+The repository still contains no key and makes no outbound request of any kind.
+
+### Route drift, fixed properly the second time
+
+`/signin` deployed as a 404: the route was added to the router but not to the prerender
+list. The same class of mistake had already happened once. Rather than fix it a second
+time by hand, `src/routes/manifest.ts` became the single list, `vite.config.ts` reads it,
+and `manifest.test.ts` parses `App.tsx` and fails with the exact paths to add. The test
+also asserts it found routes at all, so it cannot pass vacuously. Verified by deleting an
+entry and watching it fail with a useful message.
+
+### Verification
+
+- 58 tests.
+- Full walkthrough run **against the deployed production URL**, not just localhost: 0
+  console errors, 0 page errors, 0 failed requests.
+- Every route returns 200 live, including the share link and `/signin`.
+- Secret scan clean; `npm audit` clean for production dependencies.
+
+### What a reader should still be sceptical about
+
+- The breaker, retry and idempotency cache are correct and tested, but they currently sit
+  in front of a source that cannot fail. They are the right shape, not proven in anger.
+- The walkthrough asserts pages render and do not error. It does not assert pixel layout.
+- `ARCHITECTURE.md` lists four places this design breaks as it scales. None are fixed;
+  all are named with a concrete fix, because a static bundle of eight meetings has not
+  earned an inverted index or a virtualised list yet.
