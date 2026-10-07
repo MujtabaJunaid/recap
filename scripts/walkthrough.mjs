@@ -776,31 +776,17 @@ await check('the slice endpoint transcribes real audio end to end', async () => 
 })
 
 /**
- * Asserts the preflight directly, because the request above would also pass if the
- * browser happened to skip a preflight. Every custom header the client sends must be
- * named in access-control-allow-headers, and x-chunk-side being absent is what silently
- * broke live capture.
+ * There is deliberately no browser check that reads the preflight's own headers. A
+ * manual OPTIONS fetch is itself cross-origin, so the browser hides response headers
+ * the server has not put in access-control-expose-headers, and the assertion reads an
+ * empty string whether the configuration is right or wrong — a test that cannot fail
+ * for the right reason is worse than none.
+ *
+ * The check above covers it properly instead: x-chunk-side is not a simple header, so
+ * Chrome will not send that POST at all unless the preflight allowed it. Before the
+ * fix, that check failed with a blocked request. The preflight headers themselves are
+ * asserted in the server smoke test, where plain fetch is not subject to CORS.
  */
-await check('the slice preflight allows the headers the client actually sends', async () => {
-  const result = await page.evaluate(async (api) => {
-    const res = await fetch(api + '/api/transcribe-chunk', {
-      method: 'OPTIONS',
-      headers: {
-        'access-control-request-method': 'POST',
-        'access-control-request-headers': 'content-type,authorization,x-chunk-side',
-      },
-    })
-    return { status: res.status, allow: res.headers.get('access-control-allow-headers') ?? '' }
-  }, API_BASE)
-
-  assert(result.status < 400, `preflight returned ${result.status}`)
-  for (const header of ['authorization', 'content-type', 'x-chunk-side']) {
-    assert(
-      result.allow.toLowerCase().includes(header),
-      `${header} is missing from access-control-allow-headers: "${result.allow}"`,
-    )
-  }
-})
 
 await check('coaching and work-style plans both survive the new capture route', async () => {
   // The two features most at risk from a capture rewrite, asserted together so a
