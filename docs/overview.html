@@ -1,0 +1,616 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8" />
+<title>Recap — product overview</title>
+<style>
+  /*
+    Source for docs/Recap-overview.pdf. Rendered by scripts/render-pdf.mjs.
+    Colours are lifted from src/index.css rather than re-picked, so the document and
+    the product cannot drift apart.
+  */
+  :root {
+    --ink-950: #0a0b10;
+    --ink-900: #0f1117;
+    --ink-850: #14161f;
+    --ink-800: #1a1d28;
+    --ink-700: #252936;
+    --ink-600: #343a4b;
+    --ink-400: #767e94;
+    --ink-300: #9ba2b5;
+    --ink-200: #c7ccda;
+    --brand-300: #a5b4fc;
+    --brand-400: #818cf8;
+    --brand-500: #6366f1;
+    --emerald: #34d399;
+    --amber: #fbbf24;
+  }
+
+  @page { size: A4; margin: 0; }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--ink-950);
+    color: var(--ink-200);
+    font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .page {
+    width: 210mm;
+    min-height: 297mm;
+    padding: 18mm 20mm;
+    background: var(--ink-950);
+    position: relative;
+    overflow: hidden;
+    break-after: page;
+  }
+  .page:last-child { break-after: auto; }
+
+  /* Headline text picks up a slight gradient, as it does in the app. */
+  .display {
+    background: linear-gradient(135deg, #ffffff 0%, #ffffff 45%, var(--brand-300) 140%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .surface {
+    box-shadow: 0 1px 2px rgb(0 0 0 / .35), 0 8px 24px -12px rgb(0 0 0 / .55);
+  }
+
+  /* ---- Cover ---- */
+
+  .cover { display: flex; flex-direction: column; justify-content: space-between; }
+
+  .cover-bloom {
+    position: absolute;
+    top: -130mm; right: -90mm;
+    width: 260mm; height: 260mm;
+    background: radial-gradient(circle, rgb(99 102 241 / .22) 0%, transparent 62%);
+    pointer-events: none;
+  }
+
+  .wordmark { display: flex; align-items: center; gap: 9px; position: relative; }
+  .wordmark-dot {
+    width: 24px; height: 24px; border-radius: 7px;
+    background: linear-gradient(135deg, var(--brand-400), var(--brand-600, #4f46e5));
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 0 1px rgb(99 102 241 / .25), 0 8px 28px -10px rgb(99 102 241 / .55);
+  }
+  .wordmark-dot svg { width: 11px; height: 11px; fill: #fff; }
+  .wordmark-text { font-size: 17px; font-weight: 600; letter-spacing: -.02em; color: #fff; }
+
+  h1 {
+    font-size: 46px;
+    line-height: 1.05;
+    letter-spacing: -.035em;
+    font-weight: 600;
+    margin: 0 0 14px;
+  }
+
+  .standfirst {
+    font-size: 15px;
+    line-height: 1.6;
+    color: var(--ink-300);
+    max-width: 125mm;
+    margin: 0;
+  }
+
+  .cover-meta {
+    display: flex;
+    gap: 28px;
+    border-top: 1px solid var(--ink-800);
+    padding-top: 14px;
+    position: relative;
+  }
+  .cover-meta div { font-size: 10.5px; }
+  .cover-meta dt {
+    text-transform: uppercase;
+    letter-spacing: .09em;
+    font-weight: 600;
+    color: var(--ink-400);
+    font-size: 8.5px;
+    margin-bottom: 3px;
+  }
+  .cover-meta dd { margin: 0; color: var(--ink-200); }
+  .cover-meta a { color: var(--brand-400); text-decoration: none; }
+
+  /* ---- Content ---- */
+
+  .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: .1em;
+    font-size: 8.5px;
+    font-weight: 700;
+    color: var(--brand-400);
+    margin: 0 0 7px;
+  }
+
+  h2 {
+    font-size: 28px;
+    line-height: 1.15;
+    letter-spacing: -.025em;
+    font-weight: 600;
+    color: #fff;
+    margin: 0 0 12px;
+  }
+
+  h3 {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: #fff;
+    margin: 0 0 5px;
+    letter-spacing: -.01em;
+  }
+
+  p { font-size: 12.5px; line-height: 1.7; color: var(--ink-300); margin: 0 0 11px; }
+  p strong, li strong { color: var(--ink-200); font-weight: 600; }
+  em { color: var(--brand-300); font-style: normal; }
+
+  .lede { font-size: 14.5px; line-height: 1.65; color: var(--ink-200); }
+
+  .card {
+    background: var(--ink-900);
+    border: 1px solid var(--ink-800);
+    border-radius: 11px;
+    padding: 14px 16px;
+  }
+  .card p:last-child { margin-bottom: 0; }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .grid-5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+
+  .quiet { color: var(--ink-400); font-size: 11.5px; line-height: 1.65; }
+
+  ul { margin: 0 0 11px; padding-left: 0; list-style: none; }
+  li {
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--ink-300);
+    padding-left: 15px;
+    position: relative;
+    margin-bottom: 6px;
+  }
+  li::before {
+    content: '';
+    position: absolute;
+    left: 2px; top: 7px;
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: var(--brand-500);
+  }
+
+  .rule { height: 1px; background: var(--ink-800); margin: 18px 0; border: 0; }
+
+  /* ---- Pipeline diagram ---- */
+
+  .pipeline { display: flex; align-items: stretch; gap: 0; margin: 4px 0 6px; }
+  .stage { flex: 1; text-align: center; position: relative; padding: 0 3px; }
+  .stage-icon {
+    width: 30px; height: 30px;
+    margin: 0 auto 7px;
+    border-radius: 9px;
+    background: var(--ink-850);
+    border: 1px solid var(--ink-700);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .stage-icon svg { width: 14px; height: 14px; stroke: var(--brand-400); fill: none; stroke-width: 1.7; }
+  .stage-name { font-size: 9.5px; font-weight: 600; color: #fff; margin-bottom: 2px; }
+  .stage-sub { font-size: 8.5px; line-height: 1.4; color: var(--ink-400); }
+  .arrow {
+    align-self: flex-start;
+    margin-top: 15px;
+    color: var(--ink-600);
+    font-size: 13px;
+    line-height: 1;
+  }
+
+  /* ---- Reality table ---- */
+
+  table { width: 100%; border-collapse: collapse; }
+  th, td {
+    text-align: left;
+    font-size: 11.5px;
+    padding: 9px 9px;
+    border-bottom: 1px solid var(--ink-800);
+    vertical-align: top;
+    line-height: 1.5;
+  }
+  th {
+    font-size: 8.5px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--ink-400);
+    font-weight: 700;
+    border-bottom-color: var(--ink-700);
+  }
+  td { color: var(--ink-300); }
+  td:first-child { color: var(--ink-200); font-weight: 500; width: 36%; }
+
+  .tag {
+    display: inline-block;
+    font-size: 8px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    padding: 2px 6px;
+    border-radius: 99px;
+    white-space: nowrap;
+  }
+  .tag-real { background: rgb(52 211 153 / .14); color: var(--emerald); }
+  .tag-stub { background: rgb(251 191 36 / .14); color: var(--amber); }
+
+  .callout {
+    border-left: 2px solid var(--brand-500);
+    padding: 2px 0 2px 13px;
+    margin: 0 0 12px;
+  }
+  .callout p { color: var(--ink-200); font-size: 13.5px; margin: 0; }
+
+  .folio {
+    position: absolute;
+    bottom: 11mm; left: 20mm; right: 20mm;
+    display: flex; justify-content: space-between;
+    font-size: 8.5px;
+    color: var(--ink-600);
+    border-top: 1px solid var(--ink-800);
+    padding-top: 7px;
+  }
+
+  .stat { text-align: left; }
+  .stat-n {
+    font-size: 24px; font-weight: 600; color: #fff;
+    letter-spacing: -.02em; line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat-l { font-size: 9.8px; color: var(--ink-400); line-height: 1.45; margin-top: 2px; }
+</style>
+</head>
+<body>
+
+<!-- ========== Cover ========== -->
+<section class="page cover">
+  <div class="cover-bloom"></div>
+
+  <div class="wordmark">
+    <span class="wordmark-dot">
+      <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+    </span>
+    <span class="wordmark-text">Recap</span>
+  </div>
+
+  <div style="position:relative">
+    <p class="eyebrow">Product overview</p>
+    <h1 class="display">The meeting is<br />not the artefact.</h1>
+    <p class="standfirst">
+      Recap sits in a call, writes down what was said, tells you what to say next while
+      it is still happening, and afterwards turns what you agreed to into a first step
+      small enough to actually take.
+    </p>
+  </div>
+
+  <dl class="cover-meta">
+    <div>
+      <dt>Built by</dt>
+      <dd>Mujtaba Junaid</dd>
+    </div>
+    <div>
+      <dt>Live at</dt>
+      <dd><a href="https://mujtabajunaid.github.io/recap/">mujtabajunaid.github.io/recap</a></dd>
+    </div>
+    <div>
+      <dt>Source</dt>
+      <dd><a href="https://github.com/MujtabaJunaid/recap">github.com/MujtabaJunaid/recap</a></dd>
+    </div>
+    <div>
+      <dt>Date</dt>
+      <dd>October 2026</dd>
+    </div>
+  </dl>
+</section>
+
+<!-- ========== Motivation ========== -->
+<section class="page">
+  <p class="eyebrow">Why build this</p>
+  <h2>Notes compete with the conversation</h2>
+
+  <p class="lede">
+    In any meeting that matters you are asked to do two incompatible things at once: take
+    part, and keep a record. Whoever writes the best notes contributes the least, and
+    whoever contributes most remembers the least. The record of what a team decided ends
+    up depending on who happened to be typing.
+  </p>
+
+  <p>
+    Transcription tools solved the first half of that and stopped. You get a faithful
+    account of every word, which is useful roughly never, because the question afterwards
+    is not <em>what was said</em>. It is <strong>what did I agree to, and what do I do
+    first.</strong> A 58-minute transcript answers neither.
+  </p>
+
+  <div class="callout">
+    <p>
+      The gap is not between talking and text. It is between text and the next action.
+    </p>
+  </div>
+
+  <p>
+    There is a second gap, during the call rather than after it. The moment you are
+    least able to think clearly is the moment the room turns to you and asks what you
+    think. Recap is reading the conversation anyway; it may as well be useful then, when
+    help is worth something, rather than only in a summary email nobody opens.
+  </p>
+
+  <hr class="rule" />
+
+  <h3>The part most tools get wrong</h3>
+  <p>
+    An action item that reads <em>"confirm the scope in writing by Friday"</em> is a
+    perfectly accurate record and a completely useless instruction. It names an outcome,
+    not a beginning. For anyone who finds starting harder than finishing — and that is a
+    lot of people, ADHD or otherwise — the distance between that sentence and the first
+    keystroke is where the task quietly dies.
+  </p>
+  <p>
+    So Recap does not stop at the commitment. It asks how <strong>you</strong> work, and
+    turns the commitment into a two-minute opening move: one concrete first step, a
+    timebox, and something to do when you get stuck. Five work styles, chosen by the
+    person, never inferred — because software guessing at how your attention works would
+    be both wrong and unwelcome.
+  </p>
+
+  <div class="grid-5" style="margin-top:16px">
+    <div class="card" style="padding:12px 13px">
+      <h3 style="font-size:12px">Hard to start</h3>
+      <p class="quiet" style="font-size:10.5px">
+        A first step small enough to be embarrassing, a timer, and permission to do it
+        badly.
+      </p>
+    </div>
+    <div class="card" style="padding:12px 13px">
+      <h3 style="font-size:12px">Needs a finish line</h3>
+      <p class="quiet" style="font-size:10.5px">
+        Define what done looks like first, then work backwards to the opening move.
+      </p>
+    </div>
+    <div class="card" style="padding:12px 13px">
+      <h3 style="font-size:12px">One thing at a time</h3>
+      <p class="quiet" style="font-size:10.5px">
+        Split anything compound into its parts and name only the one that comes first.
+      </p>
+    </div>
+    <div class="card" style="padding:12px 13px">
+      <h3 style="font-size:12px">Long uninterrupted block</h3>
+      <p class="quiet" style="font-size:10.5px">
+        Protect the time before the task, because the cost here is interruption rather
+        than starting.
+      </p>
+    </div>
+    <div class="card" style="padding:12px 13px">
+      <h3 style="font-size:12px">Think it through with someone</h3>
+      <p class="quiet" style="font-size:10.5px">
+        Name the person to put it in front of, and what to ask them for.
+      </p>
+    </div>
+  </div>
+
+  <p class="quiet" style="margin-top:14px">
+    The same commitment produces a different plan under each one. That is the whole
+    argument: the task did not change, and what it takes to begin it did.
+  </p>
+
+  <div class="folio">
+    <span>Recap — product overview</span>
+    <span>Why build this</span>
+  </div>
+</section>
+
+<!-- ========== What it does ========== -->
+<section class="page">
+  <p class="eyebrow">What it does</p>
+  <h2>One pass over a conversation</h2>
+
+  <p class="lede">
+    Recap listens to both sides of a call from your own machine, so nothing joins the
+    meeting and no other participant sees a bot in the room.
+  </p>
+
+  <div class="card" style="padding:16px 14px; margin-bottom:16px">
+    <div class="pipeline">
+      <div class="stage">
+        <div class="stage-icon"><svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Z"/><path d="M19 11a7 7 0 0 1-14 0M12 18v3"/></svg></div>
+        <div class="stage-name">Capture</div>
+        <div class="stage-sub">Your mic and the call's audio, kept apart</div>
+      </div>
+      <div class="arrow">&rarr;</div>
+      <div class="stage">
+        <div class="stage-icon"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h11M4 18h7"/></svg></div>
+        <div class="stage-name">Transcribe</div>
+        <div class="stage-sub">Whisper, every 15 seconds</div>
+      </div>
+      <div class="arrow">&rarr;</div>
+      <div class="stage">
+        <div class="stage-icon"><svg viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M5 12H2M22 12h-3M6.3 6.3 4.2 4.2M19.8 19.8l-2.1-2.1M6.3 17.7l-2.1 2.1M19.8 4.2l-2.1 2.1"/><circle cx="12" cy="12" r="3"/></svg></div>
+        <div class="stage-name">Coach</div>
+        <div class="stage-sub">What to say next, while it matters</div>
+      </div>
+      <div class="arrow">&rarr;</div>
+      <div class="stage">
+        <div class="stage-icon"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 10h8M8 14h5"/></svg></div>
+        <div class="stage-name">Summarise</div>
+        <div class="stage-sub">Decisions, owners, open questions</div>
+      </div>
+      <div class="arrow">&rarr;</div>
+      <div class="stage">
+        <div class="stage-icon"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></div>
+        <div class="stage-name">Act</div>
+        <div class="stage-sub">A first step shaped to how you work</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <h3>Live coaching</h3>
+      <p class="quiet">
+        When the room turns to you, a suggestion appears: how the moment reads, specific
+        wording to use, why it works, and what to be careful of. Built from the last few
+        things actually said, not a template.
+      </p>
+    </div>
+    <div class="card">
+      <h3>Two-sided attribution</h3>
+      <p class="quiet">
+        Your microphone and the call's audio are recorded separately, so "you" and "them"
+        is a fact about where the sound came from rather than a diarisation guess.
+      </p>
+    </div>
+    <div class="card">
+      <h3>Notes worth keeping</h3>
+      <p class="quiet">
+        A headline, the decisions, action items with owners and timestamps, and the
+        questions left open — which is usually the most valuable section.
+      </p>
+    </div>
+    <div class="card">
+      <h3>Ask across every meeting</h3>
+      <p class="quiet">
+        One question over everything you have recorded. Every answer cites the call and
+        the second it came from, and an unsupported answer says so instead of guessing.
+      </p>
+    </div>
+  </div>
+
+  <div class="grid-2" style="margin-top:11px">
+    <div class="card">
+      <h3>Recording and playback</h3>
+      <p class="quiet">
+        The mixed audio is stored with the call and plays back against the transcript,
+        so a disputed line can be listened to rather than argued about.
+      </p>
+    </div>
+    <div class="card">
+      <h3>Shareable clips</h3>
+      <p class="quiet">
+        Any moment can be cut to a link that opens without an account, exposing that
+        clip and nothing else of the meeting around it.
+      </p>
+    </div>
+  </div>
+
+  <hr class="rule" />
+
+  <p class="quiet">
+    Recordings, transcripts, summaries and workspace state are stored per account in
+    PostgreSQL. Audio sits behind authentication and is never served from a shared cache.
+    Passwords are scrypt hashes; the live audio slices sent for transcription are
+    discarded, and only the finished recording is kept.
+  </p>
+
+  <div class="folio">
+    <span>Recap — product overview</span>
+    <span>What it does</span>
+  </div>
+</section>
+
+<!-- ========== Honesty + state ========== -->
+<section class="page">
+  <p class="eyebrow">Scope</p>
+  <h2>What is real, and what is not</h2>
+
+  <p class="lede">
+    Stating this plainly is part of the product, not a disclaimer bolted to it. The app
+    itself says the same thing on the screen where it matters.
+  </p>
+
+  <table>
+    <thead>
+      <tr><th>Capability</th><th style="width:15%">Status</th><th>Detail</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Audio capture, both sides</td>
+        <td><span class="tag tag-real">Real</span></td>
+        <td>Microphone plus shared tab or system audio, via the browser. Chrome or Edge on desktop.</td>
+      </tr>
+      <tr>
+        <td>Transcription</td>
+        <td><span class="tag tag-real">Real</span></td>
+        <td>Whisper. Verbatim on ordinary speech; weaker on product jargon and proper nouns.</td>
+      </tr>
+      <tr>
+        <td>Live coaching</td>
+        <td><span class="tag tag-real">Real</span></td>
+        <td>A model call on what has genuinely just been said in the room.</td>
+      </tr>
+      <tr>
+        <td>Summaries and action items</td>
+        <td><span class="tag tag-real">Real</span></td>
+        <td>Generated from the stored transcript, with owners and deadlines attributed.</td>
+      </tr>
+      <tr>
+        <td>Work-style CTAs</td>
+        <td><span class="tag tag-real">Real</span></td>
+        <td>Deterministic planner, with a model pass that asks a clarifying question when a commitment is vague.</td>
+      </tr>
+      <tr>
+        <td>Joining the meeting as a bot</td>
+        <td><span class="tag tag-stub">Not built</span></td>
+        <td>Needs the Zoom Meeting SDK and marketplace approval. Recap listens from your machine instead.</td>
+      </tr>
+      <tr>
+        <td>Naming individual speakers</td>
+        <td><span class="tag tag-stub">Not built</span></td>
+        <td>Without the platform's API there is no honest way to map a voice to a person. The far side is "Them".</td>
+      </tr>
+      <tr>
+        <td>Demo call</td>
+        <td><span class="tag tag-stub">Scripted</span></td>
+        <td>A scripted conversation that drives the real pipeline, so the product can be seen working without a second person.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <hr class="rule" />
+
+  <p class="eyebrow">Engineering</p>
+  <h3 style="font-size:15px; margin-bottom:9px">Verified, not asserted</h3>
+
+  <div class="grid-3" style="margin-bottom:14px">
+    <div class="stat">
+      <div class="stat-n">60</div>
+      <div class="stat-l">browser checks against the deployed app, zero console errors</div>
+    </div>
+    <div class="stat">
+      <div class="stat-n">38</div>
+      <div class="stat-l">server checks, including auth, rate limits and PII redaction</div>
+    </div>
+    <div class="stat">
+      <div class="stat-n">93</div>
+      <div class="stat-l">unit tests over the derived and resilience layers</div>
+    </div>
+  </div>
+
+  <p class="quiet">
+    The frontend is React and TypeScript on GitHub Pages. The backend is a dependency-free
+    Node server on Heroku holding the API key, so no secret reaches the browser; the build
+    fails if a key pattern appears in the bundle. Requests carry timeouts, retries with
+    jittered backoff, a circuit breaker, idempotency keys and per-IP rate limits. Logs are
+    structured and correlated, with transcript text and personal data dropped by denylist
+    before anything is written.
+  </p>
+
+  <div class="folio">
+    <span>Recap — product overview</span>
+    <span>mujtabajunaid.github.io/recap</span>
+  </div>
+</section>
+
+</body>
+</html>
