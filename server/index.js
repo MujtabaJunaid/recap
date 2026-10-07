@@ -524,8 +524,12 @@ function corsHeaders(origin) {
     // state endpoints and omitted here, so the browser rejected the preflight and
     // per-user sync failed silently — invisible to curl, which sends no preflight.
     'access-control-allow-methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    // Every custom request header the client sends must be listed, or the browser
+    // blocks the request at preflight and the failure never reaches the server. That
+    // has now bitten twice: once for the state methods above, once for x-chunk-side,
+    // where it meant a live call captured audio and transcribed none of it.
     'access-control-allow-headers':
-      'content-type, authorization, x-recording-title, x-recording-duration',
+      'content-type, authorization, x-recording-title, x-recording-duration, x-chunk-side',
     'access-control-max-age': '86400',
     vary: 'origin',
   }
