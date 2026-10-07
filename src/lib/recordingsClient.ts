@@ -90,6 +90,31 @@ export async function uploadRecording(
   return ((await response.json()) as { recording: RecordingSummary }).recording
 }
 
+/**
+ * Transcribes one slice of a call in progress. Nothing is stored server-side; the
+ * gapless archive is uploaded separately when the call ends.
+ *
+ * Returning empty text is the common case rather than a failure: most slices of most
+ * conversations are one side listening.
+ */
+export async function transcribeSlice(
+  token: string,
+  blob: Blob,
+  side: 'me' | 'them',
+): Promise<string> {
+  const response = await fetch(`${API_BASE}/api/transcribe-chunk`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${token}`,
+      'content-type': blob.type || 'audio/webm',
+      'x-chunk-side': side,
+    },
+    body: blob,
+  })
+  if (!response.ok) throw new ApiError(`slice failed (${response.status})`, response.status)
+  return ((await response.json()) as { text: string }).text ?? ''
+}
+
 export function listRecordings(token: string) {
   return request<{ recordings: RecordingSummary[] }>('/api/recordings', token).then(
     (r) => r.recordings,

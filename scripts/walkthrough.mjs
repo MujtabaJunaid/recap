@@ -29,6 +29,12 @@ const DEMO_PASSWORD = 'recap-demo-2026'
 const RUN_EMAIL = `e2e.${Date.now()}@example.com`
 const RUN_PASSWORD = 'e2e-run-password-2026'
 
+/** The proxy the deployed frontend talks to. Overridable so a local run can point elsewhere. */
+const API_BASE = (
+  process.env.VITE_API_BASE_URL ??
+  'https://recap-action-plan-proxy-a93bd7dd6d10.herokuapp.com'
+).replace(/\/$/, '')
+
 const problems = []
 const results = []
 let step = 0
@@ -526,17 +532,24 @@ await check('live coaching returns a usable suggestion', async () => {
 
 console.log('\n-- Join a call: live transcript, live coaching, saved summary --')
 
-await check('the join page explains that capture is simulated', async () => {
+await check('the demo page cannot be mistaken for a real Zoom connection', async () => {
   await go('/join')
-  await page.waitForSelector('h1:has-text("Join a call"), :text("needs the backend")', {
+  await page.waitForSelector('h1:has-text("Demo call"), :text("needs the backend")', {
     timeout: 15_000,
   })
   const gated = (await page.locator('text=needs the backend').count()) > 0
   if (gated) return
-  assert((await page.locator('text=Simulated call').count()) > 0, 'no simulated-call label')
   assert(
-    (await page.locator('text=there is no bot in a Zoom room').count()) > 0,
-    'the page does not say what is stubbed',
+    (await page.locator('text=Scripted — not a real call').count()) > 0,
+    'no scripted-call label',
+  )
+  assert(
+    (await page.locator('text=This does not join your Zoom call').count()) > 0,
+    'the page does not disown the Zoom connection it used to imply',
+  )
+  assert(
+    (await page.locator('a[href$="/live"]').count()) > 0,
+    'the demo page does not point at the real-capture route',
   )
 })
 await shot('join-lobby')
@@ -644,6 +657,134 @@ await check('an action item from the real call gets a work-style plan', async ()
 })
 await shot('join-detail-plan')
 
+
+console.log('\n-- Real call capture --')
+
+await check('the live page is reachable and declares real audio', async () => {
+  await go('/live')
+  await page.waitForSelector(
+    'h1:has-text("Take notes in a real call"), :text("needs the backend")',
+    { timeout: 15_000 },
+  )
+  if ((await page.locator('text=needs the backend').count()) > 0) return
+  assert((await page.locator('text=Real audio').count()) > 0, 'no real-audio badge')
+  assert(
+    (await page.getByRole('button', { name: 'Start listening' }).count()) > 0,
+    'no way to start listening',
+  )
+})
+
+await check('the live page states its limits rather than implying a Zoom integration', async () => {
+  if ((await page.locator('text=needs the backend').count()) > 0) return
+  assert(
+    (await page.locator('text=There is no bot in the meeting').count()) > 0,
+    'the page does not disclaim the bot',
+  )
+  assert(
+    (await page.locator('text=Share system audio').count()) > 0,
+    'the page does not say how to capture the far side',
+  )
+})
+await shot('live-ready')
+
+await check('both call routes are in the nav and named apart', async () => {
+  assert((await page.locator('a[href$="/live"]').count()) > 0, 'no live-call nav entry')
+  assert((await page.locator('a[href$="/join"]').count()) > 0, 'no demo-call nav entry')
+})
+
+/**
+ * Capture itself needs a screen-share picker, which no headless browser can drive. What
+ * is testable without one — and is exactly the failure that prompted this feature — is
+ * that a share carrying no audio is reported rather than silently producing an empty
+ * transcript and leaving someone wondering why nobody was heard.
+ */
+await check('a share carrying no audio is reported instead of failing silently', async () => {
+  if ((await page.locator('text=needs the backend').count()) > 0) return
+
+  await page.evaluate(() => {
+    navigator.mediaDevices.getDisplayMedia = async () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = 2
+      canvas.height = 2
+      return canvas.captureStream(1)
+    }
+  })
+
+  await page.getByRole('button', { name: 'Start listening' }).click()
+  await page.waitForSelector('text=That share carried no audio', { timeout: 15_000 })
+})
+await shot('live-no-audio')
+
+await check('the slice endpoint transcribes real audio end to end', async () => {
+  const result = await page.evaluate(async (api) => {
+    const raw = localStorage.getItem('recap.session')
+    const token = raw ? JSON.parse(raw).token : null
+    if (!api || !token) return { skipped: true }
+
+    // A real RIFF/WAVE container, built here so the test needs neither a fixture nor
+    // ffmpeg. One second of a 440Hz tone: Whisper finds no words in it, which is the
+    // point — this proves the whole round trip without asserting what a model heard.
+    const rate = 16000
+    const samples = rate
+    const buffer = new ArrayBuffer(44 + samples * 2)
+    const view = new DataView(buffer)
+    const ascii = (off, str) =>
+      [...str].forEach((c, i) => view.setUint8(off + i, c.charCodeAt(0)))
+    ascii(0, 'RIFF')
+    view.setUint32(4, 36 + samples * 2, true)
+    ascii(8, 'WAVEfmt ')
+    view.setUint32(16, 16, true)
+    view.setUint16(20, 1, true)
+    view.setUint16(22, 1, true)
+    view.setUint32(24, rate, true)
+    view.setUint32(28, rate * 2, true)
+    view.setUint16(32, 2, true)
+    view.setUint16(34, 16, true)
+    ascii(36, 'data')
+    view.setUint32(40, samples * 2, true)
+    for (let i = 0; i < samples; i++) {
+      view.setInt16(44 + i * 2, Math.sin((i / rate) * 440 * 2 * Math.PI) * 12000, true)
+    }
+
+    const res = await fetch(api.replace(/\/$/, '') + '/api/transcribe-chunk', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer ' + token,
+        'content-type': 'audio/wav',
+        'x-chunk-side': 'them',
+      },
+      body: new Blob([buffer], { type: 'audio/wav' }),
+    })
+    return { status: res.status, body: res.ok ? await res.json() : null }
+  }, API_BASE)
+
+  if (result.skipped) return
+  assert(result.status === 200, `slice endpoint returned ${result.status}`)
+  assert(typeof result.body?.text === 'string', 'no text field came back')
+  assert(result.body?.side === 'them', 'the side did not round-trip')
+})
+
+await check('coaching and work-style plans both survive the new capture route', async () => {
+  // The two features most at risk from a capture rewrite, asserted together so a
+  // regression in either fails one obvious check rather than being inferred.
+  await go('/live')
+  const gated = (await page.locator('text=needs the backend').count()) > 0
+  if (!gated) {
+    assert(
+      (await page.locator('text=What to say next').count()) > 0 ||
+        (await page.locator('text=Before you start').count()) > 0,
+      'the live route lost its coaching panel',
+    )
+  }
+  await go('/actions')
+  await page.waitForSelector('text=How you work best', { timeout: 15_000 })
+  // The picker starts collapsed, showing only the current style.
+  await page.getByRole('button', { name: 'Change' }).first().click()
+  const styles = await page.locator('button[aria-pressed]').count()
+  assert(styles >= 5, `expected 5 work styles, found ${styles}`)
+  const chosen = await page.locator('button[aria-pressed="true"]').count()
+  assert(chosen === 1, `expected exactly one selected style, found ${chosen}`)
+})
 
 console.log('\n-- Ask across every meeting --')
 

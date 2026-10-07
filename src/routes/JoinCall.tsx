@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { Icon, ICONS } from '../components/primitives'
 import { useSession } from '../state/session'
 import { SCENARIOS, scenarioDuration, YOU, type CallScenario, type ScriptLine } from '../data/callScript'
@@ -159,24 +159,38 @@ export function JoinCall() {
     <div className="mx-auto max-w-6xl px-4 py-7 md:px-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-white">Join a call</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-white">Demo call</h1>
           <p className="mt-1 max-w-2xl text-sm text-ink-400">
-            Recap sits in the call, writes down what is said, coaches you while it happens,
-            and files the summary afterwards.
+            A scripted conversation that drives the real pipeline, so the product can be
+            seen working in forty seconds without needing anyone else on the line.
           </p>
         </div>
-        <span className="rounded-full border border-amber-500/25 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-300">
-          Simulated call
+        <span className="rounded-full border border-amber-500/40 bg-amber-500/15 px-2.5 py-1 text-[11px] font-semibold text-amber-200">
+          Scripted — not a real call
         </span>
       </div>
 
-      <p className="mt-3 max-w-3xl rounded-lg border border-ink-800 bg-ink-900 p-3 text-[12px] leading-relaxed text-ink-400">
-        <span className="text-ink-300">What is real and what is not:</span> the conversation
-        is scripted — there is no bot in a Zoom room, which needs the Zoom SDK and
-        marketplace approval. Everything downstream is real: lines arrive on a clock, the
-        coaching is a live model call on what has actually been said, and leaving sends the
-        transcript to be summarised and saved to your account.
-      </p>
+      <div className="mt-3 max-w-3xl rounded-lg border border-amber-500/25 bg-amber-500/5 p-3.5">
+        <p className="text-[12px] leading-relaxed text-ink-300">
+          <span className="font-semibold text-amber-200">This does not join your Zoom call.</span>{' '}
+          Nothing here touches a meeting platform, your microphone, or your speakers. The
+          conversation below is a script, and the platform chips are part of the scenario
+          rather than a connection.
+        </p>
+        <p className="mt-2 text-[12px] leading-relaxed text-ink-400">
+          Everything after capture is genuine: lines arrive on a clock, the coaching is a
+          real model call on what has been said so far, and leaving sends the transcript
+          to be summarised and stored against your account.
+        </p>
+        <p className="mt-2.5 text-[12px] leading-relaxed text-ink-400">
+          To take notes in a call you are actually in, with your own microphone and the
+          other side's audio,{' '}
+          <Link to="/live" className="font-medium text-brand-400 underline-offset-2 hover:underline">
+            use Live call
+          </Link>
+          .
+        </p>
+      </div>
 
       {phase === 'lobby' && (
         <div className="mt-6 space-y-3">

@@ -135,3 +135,24 @@ export async function ingest({ userId, title, mime, ext, audio, durationSeconds,
 
   return { row, work }
 }
+
+/** Live chunks are short by construction; a 20s opus slice is tens of kilobytes. */
+export const MAX_CHUNK_BYTES = 4 * 1024 * 1024
+
+/**
+ * Transcribes one slice of a call in progress and keeps nothing.
+ *
+ * The live path is deliberately not the storage path. Each slice is a self-contained
+ * container recorded by a fresh MediaRecorder, so it decodes on its own; the gapless
+ * archive is recorded separately and uploaded once at the end. Text returned here is
+ * for the person in the call and for the coach, and is never the record of truth.
+ */
+export async function transcribeChunk(audio, mime, ext, apiKey) {
+  const { segments } = await transcribe(audio, mime, ext, apiKey)
+  const text = segments
+    .map((s) => String(s.text || '').trim())
+    .filter(Boolean)
+    .join(' ')
+    .trim()
+  return text.slice(0, 2000)
+}
