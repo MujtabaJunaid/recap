@@ -54,7 +54,18 @@ export function LiveCall() {
     [token],
   )
 
-  const { state, seconds, levels, lines, error, pending, start, stop } = useLiveCapture({
+  const {
+    state,
+    seconds,
+    levels,
+    lines,
+    error,
+    pending,
+    sliceErrors,
+    farHeard,
+    start,
+    stop,
+  } = useLiveCapture({
     transcribeSlice: slice,
   })
 
@@ -107,13 +118,37 @@ export function LiveCall() {
     setPhase('saving')
     const blob = await stop()
 
-    if (lines.length === 0 && !blob) {
+    const name = title.trim() || `Live call · ${new Date().toLocaleString('en-GB')}`
+
+    /**
+     * A meeting needs a transcript, so there is nothing to save without one. Pressing
+     * save anyway used to reach the server and come back "invalid request", which named
+     * the rule instead of the problem.
+     *
+     * The audio is still worth keeping: uploading it runs the whole file through Whisper
+     * server-side, which recovers the transcript the live slices failed to produce.
+     */
+    if (lines.length === 0) {
+      if (blob) {
+        try {
+          await uploadRecording(token!, blob, name, seconds)
+          setPhase('ready')
+          setNotice(
+            farHeard
+              ? 'No speech was transcribed live, so there was no meeting to file. The audio is saved and is being transcribed in full — check Recordings shortly.'
+              : 'Nothing was heard from the call, only your own microphone. The audio is saved and is being transcribed in full. Next time, share a browser tab or tick "Share system audio".',
+          )
+          return
+        } catch {
+          setPhase('failed')
+          setNotice('Nothing was transcribed, and the audio could not be stored either.')
+          return
+        }
+      }
       setPhase('ready')
       setNotice('Nothing was captured, so there is nothing to save.')
       return
     }
-
-    const name = title.trim() || `Live call · ${new Date().toLocaleString('en-GB')}`
 
     try {
       const meeting = await saveMeeting(token!, {
@@ -311,6 +346,23 @@ export function LiveCall() {
                   {phase === 'saving' ? 'Saving…' : 'Stop and save'}
                 </button>
               </div>
+
+              {/* Both banners exist because the first version of this screen failed
+                  silently: a blocked upload and an empty room looked identical. */}
+              {sliceErrors >= 2 && (
+                <p className="border-b border-rose-500/25 bg-rose-500/10 px-4 py-2 text-[12px] leading-relaxed text-rose-200">
+                  Transcription is failing — {sliceErrors} slices in a row did not come
+                  back. The audio is still recording and will be transcribed in full when
+                  you stop, so nothing is being lost.
+                </p>
+              )}
+              {sliceErrors < 2 && seconds > 40 && !farHeard && (
+                <p className="border-b border-amber-500/25 bg-amber-500/10 px-4 py-2 text-[12px] leading-relaxed text-amber-200">
+                  Nothing has been heard from the call in {seconds} seconds — only your
+                  own microphone. Either nobody else has spoken, or the share is not
+                  sending audio.
+                </p>
+              )}
 
               <div className="flex-1 space-y-2.5 overflow-y-auto px-4 py-3">
                 {lines.length === 0 && (

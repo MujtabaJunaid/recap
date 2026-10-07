@@ -717,9 +717,16 @@ await shot('live-no-audio')
 
 await check('the slice endpoint transcribes real audio end to end', async () => {
   const result = await page.evaluate(async (api) => {
-    const raw = localStorage.getItem('recap.session')
+    // Same prefix scan the other API checks use. Hardcoding a key name here — and
+    // getting it wrong — made this check return "skipped" and pass without testing
+    // anything, which is how a CORS failure that broke every live call reached
+    // production. A missing token is now a failure, not a quiet skip.
+    const raw = Object.keys(localStorage)
+      .filter((k) => k.startsWith('recap:session'))
+      .map((k) => localStorage.getItem(k))[0]
     const token = raw ? JSON.parse(raw).token : null
-    if (!api || !token) return { skipped: true }
+    if (!api) return { noApi: true }
+    if (!token) return { noToken: true }
 
     // A real RIFF/WAVE container, built here so the test needs neither a fixture nor
     // ffmpeg. One second of a 440Hz tone: Whisper finds no words in it, which is the
@@ -756,12 +763,43 @@ await check('the slice endpoint transcribes real audio end to end', async () => 
       body: new Blob([buffer], { type: 'audio/wav' }),
     })
     return { status: res.status, body: res.ok ? await res.json() : null }
-  }, API_BASE)
+    // A CORS rejection arrives as a thrown TypeError rather than a status, so it has to
+    // be caught here or the evaluate fails with a message that names nothing.
+  }, API_BASE).catch((e) => ({ blocked: String(e?.message ?? e) }))
 
-  if (result.skipped) return
+  if (result.noApi) return
+  assert(!result.noToken, 'no session token found: this check did not actually run')
+  assert(!result.blocked, `the browser blocked the request: ${result.blocked}`)
   assert(result.status === 200, `slice endpoint returned ${result.status}`)
   assert(typeof result.body?.text === 'string', 'no text field came back')
   assert(result.body?.side === 'them', 'the side did not round-trip')
+})
+
+/**
+ * Asserts the preflight directly, because the request above would also pass if the
+ * browser happened to skip a preflight. Every custom header the client sends must be
+ * named in access-control-allow-headers, and x-chunk-side being absent is what silently
+ * broke live capture.
+ */
+await check('the slice preflight allows the headers the client actually sends', async () => {
+  const result = await page.evaluate(async (api) => {
+    const res = await fetch(api + '/api/transcribe-chunk', {
+      method: 'OPTIONS',
+      headers: {
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'content-type,authorization,x-chunk-side',
+      },
+    })
+    return { status: res.status, allow: res.headers.get('access-control-allow-headers') ?? '' }
+  }, API_BASE)
+
+  assert(result.status < 400, `preflight returned ${result.status}`)
+  for (const header of ['authorization', 'content-type', 'x-chunk-side']) {
+    assert(
+      result.allow.toLowerCase().includes(header),
+      `${header} is missing from access-control-allow-headers: "${result.allow}"`,
+    )
+  }
 })
 
 await check('coaching and work-style plans both survive the new capture route', async () => {

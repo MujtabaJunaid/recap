@@ -68,6 +68,10 @@ export function useLiveCapture({ transcribeSlice }: Options) {
   const [lines, setLines] = useState<CaptureLine[]>([])
   const [error, setError] = useState('')
   const [pending, setPending] = useState(0)
+  const [sliceErrors, setSliceErrors] = useState(0)
+  /** Whether the far side has ever been audible. A flat meter is the one failure that
+   *  is invisible from the transcript alone. */
+  const [farHeard, setFarHeard] = useState(false)
 
   const micStream = useRef<MediaStream | null>(null)
   const farStream = useRef<MediaStream | null>(null)
@@ -151,9 +155,15 @@ export function useLiveCapture({ transcribeSlice }: Options) {
 
         setPending((n) => n + 1)
         void transcribeSlice(blob, side)
-          .then((text) => push(side, text, at))
+          .then((text) => {
+            push(side, text, at)
+            setSliceErrors(0)
+          })
           .catch(() => {
-            // One lost slice must not end the call. The archive still has the audio.
+            // One lost slice must not end the call — the archive still holds the audio —
+            // but a run of them means nothing is being transcribed, and continuing in
+            // silence is how a broken call looks identical to a quiet one.
+            setSliceErrors((n) => n + 1)
           })
           .finally(() => setPending((n) => Math.max(0, n - 1)))
       }
@@ -178,6 +188,8 @@ export function useLiveCapture({ transcribeSlice }: Options) {
     setLines([])
     setSeconds(0)
     setPending(0)
+    setSliceErrors(0)
+    setFarHeard(false)
     archiveChunks.current = []
 
     if (!captureSupported()) {
@@ -284,7 +296,10 @@ export function useLiveCapture({ transcribeSlice }: Options) {
     }
 
     const tick = () => {
-      setLevels({ me: peak(meters.me), them: peak(meters.them) })
+      const next = { me: peak(meters.me), them: peak(meters.them) }
+      setLevels(next)
+      // Well clear of the noise floor, so a hiss does not count as hearing anyone.
+      if (next.them > 0.08) setFarHeard(true)
       frame.current = requestAnimationFrame(tick)
     }
     frame.current = requestAnimationFrame(tick)
@@ -331,5 +346,5 @@ export function useLiveCapture({ transcribeSlice }: Options) {
     return blob
   }, [teardown])
 
-  return { state, seconds, levels, lines, error, pending, start, stop }
+  return { state, seconds, levels, lines, error, pending, sliceErrors, farHeard, start, stop }
 }

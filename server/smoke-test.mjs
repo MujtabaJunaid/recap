@@ -453,6 +453,25 @@ try {
     assert(!log.includes(process.env.DATABASE_URL ?? ' '), 'connection string in log')
   })
 
+  await check('the preflight names every custom header the client sends', async () => {
+    // A header the client sends but the preflight omits is rejected by the browser and
+    // never reaches the server, so curl and these tests would both pass while every
+    // real request failed. x-chunk-side was exactly that.
+    const res = await fetch(`${BASE}/api/transcribe-chunk`, {
+      method: 'OPTIONS',
+      headers: {
+        origin: ORIGIN,
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'content-type,authorization,x-chunk-side',
+      },
+    })
+    assert(res.status < 400, `preflight returned ${res.status}`)
+    const allow = (res.headers.get('access-control-allow-headers') ?? '').toLowerCase()
+    for (const h of ['content-type', 'authorization', 'x-chunk-side', 'x-recording-title']) {
+      assert(allow.includes(h), `${h} missing from allow-headers: "${allow}"`)
+    }
+  })
+
   await check('the live-slice endpoint guards auth, format and size', async () => {
     // Its own instance with a key configured: every assertion below is a validation
     // path that returns before Whisper is ever called, so no upstream request is made.
