@@ -37,7 +37,14 @@ import {
   migrate,
   putState,
 } from './db.js'
-import { ingest, looksLikeAudio, MAX_AUDIO_BYTES, normaliseMime } from './recordings.js'
+import {
+  ingest,
+  looksLikeAudio,
+  MAX_AUDIO_BYTES,
+  MAX_CHUNK_BYTES,
+  normaliseMime,
+  transcribeChunk,
+} from './recordings.js'
 import { coach, validateContext } from './live-coach.js'
 import { summarise, validateTranscript } from './meetings.js'
 import { ask, validateAsk } from './ask.js'
@@ -663,6 +670,7 @@ const server = createServer(async (req, res) => {
   const meetingMatch = /^\/api\/meetings(?:\/(\d+))?$/.exec(req.url || '')
   const isMeetings = Boolean(meetingMatch)
   const isAsk = req.method === 'POST' && req.url === '/api/ask'
+  const isChunk = req.method === 'POST' && req.url === '/api/transcribe-chunk'
 
   if (
     !isLogin &&
@@ -673,7 +681,8 @@ const server = createServer(async (req, res) => {
     !isRecordings &&
     !isCoach &&
     !isMeetings &&
-    !isAsk
+    !isAsk &&
+    !isChunk
   ) {
     send(res, 404, { error: 'not found' }, cors)
     return
@@ -1038,6 +1047,58 @@ const server = createServer(async (req, res) => {
   }
 
   // ---- Recordings ----------------------------------------------------------------
+  // ---- Live call: transcribe one slice, store nothing ------------------------
+  if (isChunk) {
+    const session = requireSession(req)
+    if (!session?.uid || session.uid === '0') {
+      send(res, 401, { error: 'sign in required' }, { ...cors, 'www-authenticate': 'Bearer' })
+      return
+    }
+
+    if (!API_KEY) {
+      send(res, 503, { error: 'transcription is unavailable' }, cors)
+      return
+    }
+
+    const declared = normaliseMime(req.headers['content-type'])
+    if (!declared) {
+      send(res, 415, { error: 'unsupported audio format' }, cors)
+      return
+    }
+
+    const side = req.headers['x-chunk-side'] === 'them' ? 'them' : 'me'
+
+    try {
+      const audio = await readRawBody(req, MAX_CHUNK_BYTES)
+      // Silence compresses to almost nothing; below this there is no speech to find.
+      if (audio.length < 1024) {
+        send(res, 200, { text: '', side }, cors)
+        return
+      }
+      if (!looksLikeAudio(audio)) {
+        send(res, 415, { error: 'that does not look like audio' }, cors)
+        return
+      }
+
+      const text = await transcribeChunk(audio, declared.mime, declared.ext, API_KEY)
+      log('info', 'chunk.transcribed', {
+        correlationId,
+        side,
+        bytes: audio.length,
+        chars: text.length,
+      })
+      send(res, 200, { text, side }, cors)
+    } catch (error) {
+      if (error.name === 'PayloadTooLargeError') {
+        send(res, 413, { error: 'slice is too large' }, cors)
+        return
+      }
+      log('error', 'chunk.failed', { correlationId, side, errorName: error?.name })
+      send(res, 502, { error: 'could not transcribe that slice' }, cors)
+    }
+    return
+  }
+
   if (isRecordings) {
     const session = requireSession(req)
     if (!session?.uid || session.uid === '0') {

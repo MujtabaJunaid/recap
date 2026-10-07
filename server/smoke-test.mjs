@@ -453,6 +453,54 @@ try {
     assert(!log.includes(process.env.DATABASE_URL ?? ' '), 'connection string in log')
   })
 
+  await check('the live-slice endpoint guards auth, format and size', async () => {
+    // Its own instance with a key configured: every assertion below is a validation
+    // path that returns before Whisper is ever called, so no upstream request is made.
+    const port = PORT + 4
+    const inst = start(port, {
+      RATE_LIMIT_PER_SEC: '1000',
+      RATE_LIMIT_BURST: '1000',
+      GROQ_API_KEY: 'test-key-not-used',
+    })
+    const base = `http://127.0.0.1:${port}`
+    const slice = (body, headers = {}) =>
+      fetch(`${base}/api/transcribe-chunk`, {
+        method: 'POST',
+        headers: { 'content-type': 'audio/webm', origin: ORIGIN, ...headers },
+        body,
+      })
+
+    try {
+      await waitForBoot(base)
+      const auth = { authorization: `Bearer ${token}` }
+
+      const anon = await slice(Buffer.alloc(2048, 7))
+      assert(anon.status === 401, `anonymous slice got ${anon.status}, want 401`)
+
+      // Right size and right declared type, wrong magic bytes.
+      const notAudio = await slice(Buffer.alloc(4096, 0x41), { ...auth, 'x-chunk-side': 'them' })
+      assert(notAudio.status === 415, `non-audio slice got ${notAudio.status}, want 415`)
+
+      // Silence compresses to almost nothing, and is not an error.
+      const silent = await slice(Buffer.alloc(64, 0), { ...auth, 'x-chunk-side': 'me' })
+      assert(silent.status === 200, `silent slice got ${silent.status}, want 200`)
+      const quiet = await silent.json()
+      assert(quiet.text === '', 'a tiny slice should transcribe to nothing')
+      assert(quiet.side === 'me', 'the side should come back as sent')
+
+      const huge = await slice(Buffer.alloc(5 * 1024 * 1024, 7), auth)
+      assert(huge.status === 413, `oversize slice got ${huge.status}, want 413`)
+
+      const badType = await slice(Buffer.alloc(2048, 7), {
+        ...auth,
+        'content-type': 'application/zip',
+      })
+      assert(badType.status === 415, `bad content-type got ${badType.status}, want 415`)
+    } finally {
+      inst.child.kill('SIGTERM')
+    }
+  })
+
   await check('a transcript never reaches a log line, even via an error message', async () => {
     const canary = 'ZEBRAQUARTZ-transcript-canary-9471'
     await post(

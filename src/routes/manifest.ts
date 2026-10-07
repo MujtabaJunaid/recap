@@ -11,6 +11,7 @@ export const STATIC_ROUTES = [
   'ask',
   'highlights',
   'join',
+  'live',
   'record',
   'search',
   'signin',
