@@ -34,7 +34,7 @@ jobs:
       - run: npm run build
         env:
           VITE_API_BASE_URL: https://recap-action-plan-proxy-a93bd7dd6d10.herokuapp.com
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: dist
 
